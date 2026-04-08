@@ -1,11 +1,99 @@
 @import 'tailwindcss';
+@config '../../tailwind.config.js';
 
 @source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
 @source '../../storage/framework/views/*.php';
 @source '../**/*.blade.php';
 @source '../**/*.js';
 
+:root {
+    --background: 30 30 30;
+    --primary: 27 60 83;
+    --secondary: 35 76 106;
+    --accent: 69 104 130;
+    --text: 247 248 240;
+
+    /* Semute Color Palette */
+    --semute-bg-primary: #1E1E1E;
+    --semute-sidebar: #141414;
+    --semute-border: #234C6A;
+    --semute-accent: #456882;
+    --semute-text: #F7F8F0;
+    --semute-text-secondary: #B0B0B0;
+}
+
 @theme {
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/* Layout Grid - Responsive */
+.app-layout {
+    display: flex;
+    flex-direction: column;
+    background-color: var(--semute-bg-primary);
+}
+
+/* Desktop layout: Sidebar fixed left, content scrollable right */
+@media (min-width: 1024px) {
+    .app-layout > div:last-child {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 1.5rem;
+    }
+
+    .sidebar-wrapper {
+        position: sticky;
+        top: 1.5rem;
+        max-height: calc(100vh - 3rem);
+    }
+
+    .content-column {
+        min-width: 0;
+        overflow-y: auto;
+        max-height: calc(100vh - 100px);
+    }
+}
+
+/* Mobile layout: Stack vertically */
+@media (max-width: 1023px) {
+    .app-layout > div:last-child {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .sidebar-wrapper {
+        order: 2;
+    }
+
+    .content-column {
+        order: 1;
+    }
+}
+
+/* Smooth transitions */
+.history-item {
+    transition: all 200ms ease;
+}
+
+.history-item:hover {
+    background-color: rgba(35, 76, 106, 0.15);
+    border-color: rgba(69, 104, 130, 0.5);
+}
+
+/* Utility classes for Semute colors */
+.bg-semute-primary {
+    background-color: var(--semute-bg-primary);
+}
+
+.bg-semute-sidebar {
+    background-color: var(--semute-sidebar);
+}
+
+.border-semute {
+    border-color: var(--semute-border);
+}
+
+.text-semute {
+    color: var(--semute-text);
 }

@@ -1,0 +1,36 @@
+<svg viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMid meet">
+  <!-- Triangle A (Left) -->
+  <g>
+    <!-- Triangle outline -->
+    <path d="M 30 80 L 10 30 L 50 30 Z" fill="none" stroke="#5B9FBD" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Inner horizontal line -->
+    <line x1="18" y1="60" x2="42" y2="60" stroke="#5B9FBD" stroke-width="2"/>
+    <!-- Diamond star in triangle -->
+    <g transform="translate(30, 45)">
+      <circle cx="0" cy="0" r="3" fill="#B0D4E3"/>
+      <path d="M 0,-5 L 4,-1 L 0,3 L -4,-1 Z" fill="#B0D4E3"/>
+    </g>
+  </g>
+
+  <!-- Database Cylinder (Right) -->
+  <g>
+    <!-- Top ellipse -->
+    <ellipse cx="75" cy="35" rx="15" ry="8" fill="none" stroke="#B0D4E3" stroke-width="2.5"/>
+    <!-- Middle line -->
+    <line x1="60" y1="35" x2="90" y2="35" stroke="#B0D4E3" stroke-width="2.5"/>
+    <!-- Left and right lines -->
+    <line x1="60" y1="35" x2="60" y2="75" stroke="#B0D4E3" stroke-width="2.5"/>
+    <line x1="90" y1="35" x2="90" y2="75" stroke="#B0D4E3" stroke-width="2.5"/>
+    <!-- Bottom ellipse -->
+    <ellipse cx="75" cy="75" rx="15" ry="8" fill="none" stroke="#B0D4E3" stroke-width="2.5"/>
+    
+    <!-- Horizontal bands -->
+    <ellipse cx="75" cy="50" rx="15" ry="7" fill="none" stroke="#5B9FBD" stroke-width="1.5" stroke-dasharray="2,3"/>
+    <ellipse cx="75" cy="65" rx="15" ry="7" fill="none" stroke="#5B9FBD" stroke-width="1.5" stroke-dasharray="2,3"/>
+  </g>
+
+  <!-- AutoSpec Text -->
+  <text x="110" y="70" font-family="Arial, sans-serif" font-size="42" font-weight="bold" fill="#FFFFFF" letter-spacing="-1">
+    <tspan>AUTO</tspan><tspan fill="#5B9FBD">SPEC</tspan>
+  </text>
+</svg>
