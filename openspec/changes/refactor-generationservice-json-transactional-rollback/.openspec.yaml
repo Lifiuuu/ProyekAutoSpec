@@ -1,0 +1,8 @@
+title: Refactor GenerationService: JSON schema & transactional rollback
+summary: "Refactor `app/Services/GenerationService.php` to enforce strict JSON schema, add JSON cleaning, convert JSON->DDL, and wrap the whole generation pipeline in a DB transaction with rollback on any failure. Use LLM env vars and force base URL for REST actions."
+author: copilot
+tags:
+  - refactor
+  - generation
+  - json
+  - transactional

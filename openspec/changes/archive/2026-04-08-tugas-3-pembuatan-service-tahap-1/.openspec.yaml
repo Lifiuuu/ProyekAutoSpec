@@ -1,0 +1,7 @@
+title: "TUGAS 3: PEMBUATAN SERVICE (TAHAP 1 - DATABASE)"
+description: "Implement GenerationService to call LLM to generate SQL DDL, execute it, and persist SQL to storage. Wire service into GenerateArtifactsJob."
+authors:
+  - name: opsx-bot
+    email: opsx@local
+tags: [tugas, service, generator, llm]
+version: 1
