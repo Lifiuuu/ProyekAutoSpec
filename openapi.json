@@ -1,0 +1,68 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "AutoSpec Mock", "version": "1.0.0" },
+  "paths": {
+    "/": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Root mock response",
+            "content": {
+              "application/json": {
+                "example": {
+                  "message": "Prism mock is running",
+                  "hint": "Open /api/generate (GET) in browser, or call POST /api/generate from client."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/favicon.ico": {
+      "get": {
+        "responses": {
+          "204": {
+            "description": "No favicon"
+          }
+        }
+      }
+    },
+    "/api/generate": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Berhasil (browser-friendly)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "tables": [
+                    { "name": "Buku", "columns": ["id", "judul", "penulis"] },
+                    { "name": "User", "columns": ["id", "nama", "email"] }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Berhasil",
+            "content": {
+              "application/json": {
+                "example": {
+                  "tables": [
+                    { "name": "Buku", "columns": ["id", "judul", "penulis"] },
+                    { "name": "User", "columns": ["id", "nama", "email"] }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
