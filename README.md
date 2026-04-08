@@ -27,6 +27,43 @@ Laravel has the most extensive and thorough [documentation](https://laravel.com/
 
 If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
 
+## Auth component (Auth.jsx)
+
+This project includes a React `Auth` component for manual testing under
+`resources/js/components/Auth.jsx`. It uses Supabase for email/password
+authentication and Tailwind for styling with the PRD color palette
+(background `#1E1E1E`, primary `#1B3C53`, text `#F7F8F0`).
+
+Setup (frontend):
+
+1. Create a Supabase project and copy the `URL` and `ANON KEY`.
+2. Add these to your environment (Vite expects `VITE_SUPABASE_URL` and
+	 `VITE_SUPABASE_ANON_KEY`). For local development, add them to
+	 `.env` or your shell environment. Example `.env` entries:
+
+```env
+VITE_SUPABASE_URL=https://xyzcompany.supabase.co
+VITE_SUPABASE_ANON_KEY=public-anon-key-xxx
+```
+
+3. Install node deps and start dev server:
+
+```bash
+npm install
+npm run dev
+```
+
+4. Visit the test page:
+	 - Vite root: http://localhost:5173/ (bundler running)
+	 - Laravel route (if PHP server is running): http://localhost/auth-test
+
+Notes:
+- The component will call `supabase.auth.signUp` and
+	`supabase.auth.signInWithPassword`. Ensure the Supabase project allows
+	email sign-ups.
+- If you see CORS or missing env errors, confirm the Vite env vars are set
+	and that Laravel/Vite integration is running.
+
 ## Laravel Sponsors
 
 We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).

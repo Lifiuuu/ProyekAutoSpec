@@ -1,0 +1,15 @@
+name: add-auth-component
+title: Add `Auth.jsx` component for AutoSpec frontend
+description: |
+  Create a reusable React `Auth.jsx` component that implements email/password
+  authentication using `@supabase/supabase-js`, styled with Tailwind CSS and
+  the project's PRD color palette.
+artifacts:
+  - proposal
+  - design
+  - tasks
+apply:
+  requires:
+    - tasks
+applied: true
+appliedAt: 2026-04-08T00:00:00Z

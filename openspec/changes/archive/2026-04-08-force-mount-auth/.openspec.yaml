@@ -1,0 +1,14 @@
+name: force-mount-auth
+title: Force-mount `Auth` and fix blank page
+description: |
+  Force App to render `Auth` directly, ensure root element ID matches mount code,
+  import `app.css` at top of `resources/js/app.js`, and add a debug console log
+  to confirm the React app is running. This fixes blank/empty pages caused by
+  missing mounts or missing CSS imports.
+artifacts:
+  - proposal
+  - design
+  - tasks
+apply:
+  requires:
+    - tasks
