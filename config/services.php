@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'swagger_ui' => [
+        'url' => env('SWAGGER_UI_URL', env('APP_URL', 'http://localhost') . '/api/documentation'),
+    ],
+
 ];

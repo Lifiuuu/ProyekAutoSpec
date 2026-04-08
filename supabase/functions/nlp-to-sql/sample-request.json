@@ -1,0 +1,5 @@
+{
+  "prompt": "Tampilkan daftar pesanan aktif",
+  "dialect": "postgresql",
+  "limit": 5
+}
