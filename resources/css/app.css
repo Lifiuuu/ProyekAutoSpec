@@ -27,6 +27,10 @@
         'Segoe UI Symbol', 'Noto Color Emoji';
 }
 
+html {
+    scroll-behavior: smooth;
+}
+
 /* Layout Grid - Responsive */
 .app-layout {
     display: flex;
