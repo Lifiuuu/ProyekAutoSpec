@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: autospec-scheduler
+  namespace: autospec
+  labels:
+    app.kubernetes.io/name: proyekautospec
+    app.kubernetes.io/component: scheduler
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: scheduler
+              image: ghcr.io/lifiuuu/proyekautospec:latest
+              imagePullPolicy: IfNotPresent
+              command: ["php", "artisan", "schedule:run", "--verbose", "--no-interaction"]
+              envFrom:
+                - configMapRef:
+                    name: autospec-config
+                - secretRef:
+                    name: autospec-secret
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 300m
+                  memory: 256Mi
+              volumeMounts:
+                - name: storage
+                  mountPath: /var/www/html/storage
+                - name: cache
+                  mountPath: /var/www/html/bootstrap/cache
+          volumes:
+            - name: storage
+              emptyDir: {}
+            - name: cache
+              emptyDir: {}

@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proyekautospec:local
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./storage:/var/www/html/storage
+      - ./bootstrap/cache:/var/www/html/bootstrap/cache
+    command: ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+    restart: unless-stopped
+
+  queue:
+    image: proyekautospec:local
+    depends_on:
+      - app
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/var/www/html/storage
+      - ./bootstrap/cache:/var/www/html/bootstrap/cache
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=120"]
+    restart: unless-stopped
+
+  scheduler:
+    image: proyekautospec:local
+    depends_on:
+      - app
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/var/www/html/storage
+      - ./bootstrap/cache:/var/www/html/bootstrap/cache
+    command:
+      - sh
+      - -c
+      - while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done
+    restart: unless-stopped
