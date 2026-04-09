@@ -5,6 +5,7 @@ import Sidebar from './Sidebar.jsx';
 import MainContent from './MainContent.jsx';
 import SwaggerDocs from '../SwaggerDocs.jsx';
 import AuthPage from '../Auth/AuthPage.jsx';
+import LandingPage from '../Landing/LandingPage.jsx';
 import { useAuth } from '../../contexts/AuthContext.jsx';
 
 export default function AppLayout({
@@ -17,6 +18,8 @@ export default function AppLayout({
   children,
 }) {
   const { isAuthenticated, user, logout } = useAuth();
+  const currentPath = typeof window === 'undefined' ? '/main-dashboard' : window.location.pathname;
+  const isLandingRoute = currentPath === '/';
   const [swaggerSpecData, setSwaggerSpecData] = useState(null);
   const [swaggerSchemaTables, setSwaggerSchemaTables] = useState([]);
   const [swaggerDocsOpen, setSwaggerDocsOpen] = useState(false);
@@ -151,6 +154,22 @@ export default function AppLayout({
     setActiveHistoryId(null);
     setRestoredGeneration(null);
   };
+
+  const handleGoToRegister = () => {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/main-dashboard#register';
+    }
+  };
+
+  const handleGoToLogin = () => {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/main-dashboard#login';
+    }
+  };
+
+  if (isLandingRoute) {
+    return <LandingPage onLogin={handleGoToLogin} onRegister={handleGoToRegister} />;
+  }
 
   if (!isAuthenticated) {
     return <AuthPage />;

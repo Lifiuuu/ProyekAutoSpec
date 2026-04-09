@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 
 function GoogleIcon() {
@@ -60,6 +60,18 @@ export default function AuthPage() {
     : 'Daftarkan akun untuk mengelola skema database Anda.';
 
   const submitLabel = useMemo(() => (mode === 'login' ? 'Login' : 'Registrasi'), [mode]);
+
+  useEffect(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash.toLowerCase() : '';
+    if (hash === '#register') {
+      setMode('register');
+      return;
+    }
+
+    if (hash === '#login') {
+      setMode('login');
+    }
+  }, []);
 
   const pushToast = (message, tone = 'info') => {
     const id = `toast_${Date.now()}_${Math.random().toString(16).slice(2)}`;
