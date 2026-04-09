@@ -14,3 +14,7 @@ Route::get('/main-dashboard', function () {
 Route::get('/new-session', function () {
     return redirect('/main-dashboard');
 });
+
+// Generation downloads for frontend dashboard
+use App\Http\Controllers\GeneratorController;
+Route::get('generations/download/{runId}/{type}', [GeneratorController::class, 'download'])->name('generations.download');

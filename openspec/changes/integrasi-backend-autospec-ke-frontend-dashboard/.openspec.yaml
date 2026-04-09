@@ -1,0 +1,9 @@
+title: Integrasi backend Autospec ke Frontend Dashboard
+summary: "Integrate `GenerationService` with the Frontend Dashboard by updating `GeneratorController` to call the service, return the runId to the frontend, and align response handling and artifact paths to `storage/app/generations/`.
+"
+author: copilot
+tags:
+  - integration
+  - frontend
+  - backend
+  - generation
