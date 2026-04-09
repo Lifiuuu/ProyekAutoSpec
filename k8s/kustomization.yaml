@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: autospec
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.example.yaml
+  - deployment-web.yaml
+  - service.yaml
+  - ingress.yaml
+  - deployment-worker.yaml
+  - cronjob-scheduler.yaml
+  - hpa-web.yaml

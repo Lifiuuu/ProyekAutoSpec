@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autospec-config
+  namespace: autospec
+data:
+  APP_NAME: AutoSpec
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: https://autospec.local
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: info
+  DB_CONNECTION: pgsql
+  DB_HOST: 127.0.0.1
+  DB_PORT: "54322"
+  DB_DATABASE: postgres
+  SESSION_DRIVER: file
+  CACHE_STORE: file
+  QUEUE_CONNECTION: database
+  FILESYSTEM_DISK: local

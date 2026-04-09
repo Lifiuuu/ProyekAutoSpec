@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autospec-worker
+  namespace: autospec
+  labels:
+    app.kubernetes.io/name: proyekautospec
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: proyekautospec
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proyekautospec
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/lifiuuu/proyekautospec:latest
+          imagePullPolicy: IfNotPresent
+          command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=120"]
+          envFrom:
+            - configMapRef:
+                name: autospec-config
+            - secretRef:
+                name: autospec-secret
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage
+            - name: cache
+              mountPath: /var/www/html/bootstrap/cache
+      volumes:
+        - name: storage
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
