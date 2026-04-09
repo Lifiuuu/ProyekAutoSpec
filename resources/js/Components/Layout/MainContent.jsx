@@ -8,10 +8,10 @@ import Dashboard from '../Dashboard';
  *  - sections?: Object - Region-specific content (prompt, sqlReview, schema, etc)
  */
 
-export default function MainContent({ children, sections }) {
+export default function MainContent({ children, sections, dashboardProps }) {
   return (
     <main>
-      {children || <Dashboard />}
+      {children || <Dashboard {...dashboardProps} />}
     </main>
   );
 }

@@ -7,7 +7,7 @@
  *  - activeItemId?: string - ID item yang sedang active
  */
 
-export default function Sidebar({ historyItems = [], onItemClick, activeItemId }) {
+export default function Sidebar({ historyItems = [], onItemClick, activeItemId, onSwaggerDocsClick, swaggerDocsAvailable }) {
   const getStatusColor = (status) => {
     switch (status) {
       case 'success': return 'bg-green-900/30 text-green-300';
@@ -37,6 +37,15 @@ export default function Sidebar({ historyItems = [], onItemClick, activeItemId }
         <h3 className="text-sm font-bold uppercase tracking-wide text-[#456882]">Generation History</h3>
         <p className="text-xs text-gray-500 mt-1">{historyItems.length} items</p>
       </div>
+
+      <button
+        type="button"
+        onClick={onSwaggerDocsClick}
+        disabled={!swaggerDocsAvailable}
+        className="mb-5 w-full rounded-lg border border-[#234C6A]/60 bg-[#1E1E1E] px-4 py-2 text-xs font-semibold text-[#F7F8F0] transition-all duration-200 hover:bg-[#234C6A]/20 hover:border-[#456882] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Lihat Dokumentasi API
+      </button>
 
       <ul className="history-list space-y-2">
         {historyItems.length === 0 ? (

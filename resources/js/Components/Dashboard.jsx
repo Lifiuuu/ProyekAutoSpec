@@ -1,12 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 
 /**
  * Modern Dashboard Component
  * Professional UI with glassmorphism, smooth animations, and aesthetic design
  */
-const Dashboard = () => {
-    const [state, setState] = useState({
+const Dashboard = ({
+    swaggerDocsAvailable = false,
+    onSwaggerSpecDataChange,
+    onOpenSwaggerDocs,
+    onGenerationSuccess,
+    restoredGeneration,
+    sessionResetTick = 0,
+}) => {
+
+    const createInitialState = () => ({
         isLoading: false,
         nlpPrompt: '',
         dialect: 'postgresql',
@@ -39,6 +47,8 @@ const Dashboard = () => {
         showRollbackToast: false,
     });
 
+    const [state, setState] = useState(createInitialState);
+
     const mapSchemaJsonToTables = (payload) => {
         if (!payload || typeof payload !== 'object') return [];
         const list = Array.isArray(payload.tables) ? payload.tables : [];
@@ -59,6 +69,291 @@ const Dashboard = () => {
         if (raw.includes('id')) return 'ID';
         if (raw.includes('int') || raw.includes('number')) return 'Integer';
         return 'String';
+    };
+
+    const applyGenerationSnapshot = (snapshot) => {
+        if (!snapshot || typeof snapshot !== 'object') {
+            return;
+        }
+
+        const generatedSql = {
+            ddl: snapshot.generatedSql?.ddl || '',
+            dml: snapshot.generatedSql?.dml || '',
+            dcl: snapshot.generatedSql?.dcl || '',
+            trigger: snapshot.generatedSql?.trigger || '',
+        };
+
+        const schemaTables = Array.isArray(snapshot.schemaTables) ? snapshot.schemaTables : mapSchemaJsonToTables(snapshot.schemaJson || snapshot.schemaOverview || {});
+        const schemaJson = snapshot.schemaJson || snapshot.schemaOverview || {};
+        const credentials = snapshot.credentials || { username: '', password: '' };
+        const defaultDownloads = {
+            'database.sql': false,
+            'openapi.json': false,
+            'postman_collection.json': false,
+        };
+        const downloads = { ...defaultDownloads, ...(snapshot.downloads || {}) };
+        const files = {
+            'database.sql': '',
+            'openapi.json': '',
+            'postman_collection.json': '',
+            ...(snapshot.files || {}),
+        };
+
+        setState((prev) => ({
+            ...prev,
+            isLoading: false,
+            nlpPrompt: snapshot.prompt || prev.nlpPrompt,
+            dialect: snapshot.dialect || prev.dialect,
+            showReviewPanel: true,
+            generatedSql,
+            activeSqlTab: 'ddl',
+            showSchemaOverview: true,
+            schemaOverview: {
+                tables: schemaTables,
+                credentials,
+                downloads,
+                files,
+            },
+            showRollbackToast: false,
+        }));
+
+        onSwaggerSpecDataChange?.(snapshot.specData || extractSwaggerSpec({ ...snapshot, files }, schemaJson), schemaTables);
+    };
+
+    useEffect(() => {
+        if (restoredGeneration) {
+            applyGenerationSnapshot(restoredGeneration);
+        }
+    }, [restoredGeneration]);
+
+    useEffect(() => {
+        setState(createInitialState());
+        onSwaggerSpecDataChange?.(null, []);
+    }, [sessionResetTick]);
+
+    const buildSwaggerSchemaProperty = (type) => {
+        const raw = String(type || '').toLowerCase();
+
+        if (raw === 'id' || raw.includes('int') || raw.includes('number')) {
+            return { type: 'integer', format: 'int64' };
+        }
+
+        if (raw.includes('bool')) {
+            return { type: 'boolean' };
+        }
+
+        if (raw.includes('date') && raw.includes('time')) {
+            return { type: 'string', format: 'date-time' };
+        }
+
+        if (raw.includes('date')) {
+            return { type: 'string', format: 'date' };
+        }
+
+        if (raw.includes('decimal') || raw.includes('float') || raw.includes('double')) {
+            return { type: 'number', format: 'double' };
+        }
+
+        return { type: 'string' };
+    };
+
+    const sanitizeSchemaName = (value) => {
+        const base = String(value || 'Table').trim();
+        const cleaned = base.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+        return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : 'Table';
+    };
+
+    const sanitizePathSegment = (value) => {
+        const cleaned = String(value || 'resource').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        return cleaned || 'resource';
+    };
+
+    const buildFallbackOpenApiSpec = (tables = []) => {
+        const components = { schemas: {} };
+        const paths = {};
+        const serverUrl = window.location.origin;
+
+        tables.forEach((table) => {
+            const rawName = table?.name || 'table';
+            const schemaName = sanitizeSchemaName(rawName);
+            const resourceName = sanitizePathSegment(rawName);
+            const columns = Array.isArray(table?.columns) ? table.columns : [];
+
+            const properties = {};
+            const required = [];
+
+            columns.forEach((column) => {
+                const columnName = String(column?.name || '').trim().replace(/[^A-Za-z0-9_]/g, '_');
+                if (!columnName) {
+                    return;
+                }
+
+                properties[columnName] = buildSwaggerSchemaProperty(column?.type);
+                if (column?.type === 'id') {
+                    required.push(columnName);
+                }
+            });
+
+            components.schemas[schemaName] = {
+                type: 'object',
+                properties,
+                ...(required.length > 0 ? { required } : {}),
+            };
+
+            const listPath = `/api/${resourceName}`;
+            const detailPath = `/api/${resourceName}/{id}`;
+
+            paths[listPath] = {
+                get: {
+                    summary: `List ${rawName}`,
+                    responses: {
+                        200: {
+                            description: 'OK',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        type: 'array',
+                                        items: { $ref: `#/components/schemas/${schemaName}` },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                post: {
+                    summary: `Create ${rawName}`,
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: { $ref: `#/components/schemas/${schemaName}` },
+                            },
+                        },
+                    },
+                    responses: {
+                        201: {
+                            description: 'Created',
+                            content: {
+                                'application/json': {
+                                    schema: { $ref: `#/components/schemas/${schemaName}` },
+                                },
+                            },
+                        },
+                    },
+                },
+            };
+
+            paths[detailPath] = {
+                get: {
+                    summary: `Get ${rawName} by ID`,
+                    parameters: [
+                        {
+                            name: 'id',
+                            in: 'path',
+                            required: true,
+                            schema: { type: 'integer' },
+                        },
+                    ],
+                    responses: {
+                        200: {
+                            description: 'OK',
+                            content: {
+                                'application/json': {
+                                    schema: { $ref: `#/components/schemas/${schemaName}` },
+                                },
+                            },
+                        },
+                    },
+                },
+                put: {
+                    summary: `Update ${rawName}`,
+                    parameters: [
+                        {
+                            name: 'id',
+                            in: 'path',
+                            required: true,
+                            schema: { type: 'integer' },
+                        },
+                    ],
+                    requestBody: {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: { $ref: `#/components/schemas/${schemaName}` },
+                            },
+                        },
+                    },
+                    responses: {
+                        200: {
+                            description: 'Updated',
+                            content: {
+                                'application/json': {
+                                    schema: { $ref: `#/components/schemas/${schemaName}` },
+                                },
+                            },
+                        },
+                    },
+                },
+                delete: {
+                    summary: `Delete ${rawName}`,
+                    parameters: [
+                        {
+                            name: 'id',
+                            in: 'path',
+                            required: true,
+                            schema: { type: 'integer' },
+                        },
+                    ],
+                    responses: {
+                        204: {
+                            description: 'Deleted',
+                        },
+                    },
+                },
+            };
+        });
+
+        return {
+            openapi: '3.0.3',
+            info: {
+                title: 'AutoSpec Generated API',
+                version: '1.0.0',
+                description: 'Fallback documentation generated from the schema overview.',
+            },
+            servers: [{ url: serverUrl }],
+            paths,
+            components,
+        };
+    };
+
+    const extractSwaggerSpec = (data, schemaJson) => {
+        const rawOpenApi =
+            data?.specData ||
+            data?.openapi ||
+            data?.openapiSpec ||
+            data?.openapiJson ||
+            data?.files?.['openapi.json'] ||
+            data?.schemaOverview?.files?.['openapi.json'] ||
+            data?.schema_overview?.files?.['openapi.json'] ||
+            null;
+
+        if (rawOpenApi && typeof rawOpenApi === 'object' && (rawOpenApi.openapi || rawOpenApi.swagger)) {
+            return rawOpenApi;
+        }
+
+        if (typeof rawOpenApi === 'string' && rawOpenApi.trim()) {
+            try {
+                const parsed = JSON.parse(rawOpenApi);
+                if (parsed && typeof parsed === 'object' && (parsed.openapi || parsed.swagger)) {
+                    return parsed;
+                }
+            } catch {
+                // Fallback to schema-driven spec below.
+            }
+        }
+
+        const tables = Array.isArray(schemaJson?.tables) ? schemaJson.tables : [];
+        return buildFallbackOpenApiSpec(tables);
     };
 
     const fakeAiGenerate = async (prompt, dialect) => {
@@ -186,22 +481,57 @@ const Dashboard = () => {
             }
 
             const schemaJson = data.schemaOverview || data.schema_overview || data.schemaJson || data.schema || {};
-            const credentials = data.credentials || { username: '', password: '' };
-            const downloads = data.downloads || {};
-            const files = data.files || {};
+            const credentials = data.credentials || data.schemaOverview?.credentials || data.schema_overview?.credentials || { username: '', password: '' };
+            const defaultDownloads = {
+                'database.sql': false,
+                'openapi.json': false,
+                'postman_collection.json': false,
+            };
+            const downloads = { ...defaultDownloads, ...(data.downloads || {}), ...(data.schemaOverview?.downloads || {}), ...(data.schema_overview?.downloads || {}) };
+            const files = {
+                'database.sql': '',
+                'openapi.json': '',
+                'postman_collection.json': '',
+                ...(data.files || {}),
+                ...(data.schemaOverview?.files || {}),
+                ...(data.schema_overview?.files || {}),
+            };
+            const schemaTables = mapSchemaJsonToTables(schemaJson);
+            const specData = extractSwaggerSpec(data, schemaJson);
+            const timestamp = data.timestamp || new Date().toISOString();
+            const historySnapshot = {
+                id: data.runId || `gen_${Date.now()}`,
+                name: data.name || data.title || state.nlpPrompt.trim().slice(0, 42) || 'Generated Database',
+                description: data.description || data.summary || state.nlpPrompt.trim().slice(0, 64) || 'Hasil generate database',
+                status: data.status || 'success',
+                icon_type: data.icon_type || '📊',
+                timestamp,
+                prompt: state.nlpPrompt,
+                dialect: state.dialect,
+                generatedSql,
+                schemaJson,
+                schemaTables,
+                credentials,
+                downloads,
+                files,
+                specData,
+            };
 
             setState((prev) => ({
                 ...prev,
                 generatedSql,
                 showReviewPanel: true,
                 schemaOverview: {
-                    tables: mapSchemaJsonToTables(schemaJson),
+                    tables: schemaTables,
                     credentials,
                     downloads,
                     files,
                 },
                 showSchemaOverview: true,
             }));
+
+            onSwaggerSpecDataChange?.(specData, schemaTables);
+            onGenerationSuccess?.(historySnapshot);
         } catch (error) {
             console.error('Generate request failed', error);
             const message = error?.response?.data?.message || error.message || 'Unknown error';
@@ -291,6 +621,17 @@ const Dashboard = () => {
                                     )}
                                 </button>
                             </div>
+
+                            <div className="mt-4 flex justify-end">
+                                <button
+                                    type="button"
+                                    onClick={onOpenSwaggerDocs}
+                                    disabled={!swaggerDocsAvailable}
+                                    className="rounded-xl border border-[#234C6A]/60 bg-[#1E1E1E] px-4 py-2 text-sm font-semibold text-[#F7F8F0] transition-all duration-300 hover:border-[#456882] hover:bg-[#234C6A]/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                    Lihat Dokumentasi API
+                                </button>
+                            </div>
                         </div>
 
                         {/* Loading State */}
@@ -324,8 +665,20 @@ const Dashboard = () => {
                         {/* SQL Review Panel */}
                         {state.showReviewPanel && (
                             <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] backdrop-blur-xl p-8 shadow-xl">
-                                <h3 className="text-xl font-bold text-white mb-2">SQL Review Panel</h3>
-                                <p className="text-gray-400 text-sm mb-6">Review generated SQL before execution</p>
+                                <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <h3 className="text-xl font-bold text-white mb-2">SQL Review Panel</h3>
+                                        <p className="text-gray-400 text-sm">Review generated SQL before execution</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={onOpenSwaggerDocs}
+                                        disabled={!swaggerDocsAvailable}
+                                        className="rounded-xl border border-[#234C6A]/60 bg-[#1E1E1E] px-4 py-2 text-sm font-semibold text-[#F7F8F0] transition-all duration-300 hover:border-[#456882] hover:bg-[#234C6A]/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        Lihat Dokumentasi API
+                                    </button>
+                                </div>
 
                                 <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
                                     {['ddl', 'dml', 'dcl', 'trigger'].map((tab) => (
@@ -354,8 +707,20 @@ const Dashboard = () => {
                         {/* Schema Overview */}
                         {state.showSchemaOverview && (
                             <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 to-white/[0.02] backdrop-blur-xl p-8 shadow-xl">
-                                <h3 className="text-xl font-bold text-white mb-2">Database Schema</h3>
-                                <p className="text-gray-400 text-sm mb-6">Table structure and fields</p>
+                                <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <h3 className="text-xl font-bold text-white mb-2">Database Schema</h3>
+                                        <p className="text-gray-400 text-sm">Table structure and fields</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={onOpenSwaggerDocs}
+                                        disabled={!swaggerDocsAvailable}
+                                        className="rounded-xl border border-[#234C6A]/60 bg-[#1E1E1E] px-4 py-2 text-sm font-semibold text-[#F7F8F0] transition-all duration-300 hover:border-[#456882] hover:bg-[#234C6A]/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        Lihat Dokumentasi API
+                                    </button>
+                                </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
                                     {state.schemaOverview.tables.map((table, idx) => (

@@ -1,7 +1,11 @@
+import { useEffect, useMemo, useState } from 'react';
 import Navbar from './Navbar.jsx';
 import Header from './Header.jsx';
 import Sidebar from './Sidebar.jsx';
 import MainContent from './MainContent.jsx';
+import SwaggerDocs from '../SwaggerDocs.jsx';
+import AuthPage from '../Auth/AuthPage.jsx';
+import { useAuth } from '../../contexts/AuthContext.jsx';
 
 export default function AppLayout({
   title = 'AI Database Generator',
@@ -12,39 +16,150 @@ export default function AppLayout({
   navbarStatus = 'ready',
   children,
 }) {
-  const mockHistoryItems = [
-    {
-      id: '1',
-      name: 'Schema Toko Online',
-      status: 'success',
-      timestamp: new Date(Date.now() - 3600000).toISOString(),
-      icon_type: '📊',
-      description: 'Database toko e-commerce',
-    },
-    {
-      id: '2',
-      name: 'Sistem Absensi Kampus',
-      status: 'success',
-      timestamp: new Date(Date.now() - 7200000).toISOString(),
-      icon_type: '📋',
-      description: 'Sistem manajemen kehadiran',
-    },
-    {
-      id: '3',
-      name: 'Inventory Gudang',
-      status: 'pending',
-      timestamp: new Date(Date.now() - 10800000).toISOString(),
-      icon_type: '📦',
-      description: 'Sistem manajemen stok',
-    },
-  ];
+  const { isAuthenticated, user, logout } = useAuth();
+  const [swaggerSpecData, setSwaggerSpecData] = useState(null);
+  const [swaggerSchemaTables, setSwaggerSchemaTables] = useState([]);
+  const [swaggerDocsOpen, setSwaggerDocsOpen] = useState(false);
+  const [generationHistory, setGenerationHistory] = useState(() => {
+    if (typeof window === 'undefined') {
+      return [];
+    }
 
-  const items = historyItems.length > 0 ? historyItems : mockHistoryItems;
+    try {
+      const stored = window.localStorage.getItem('autospec:generation-history');
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [activeHistoryId, setActiveHistoryId] = useState(null);
+  const [restoredGeneration, setRestoredGeneration] = useState(null);
+  const [sessionResetTick, setSessionResetTick] = useState(0);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('autospec:generation-history', JSON.stringify(generationHistory));
+    } catch {
+      // Ignore storage errors; history still works for the current session.
+    }
+  }, [generationHistory]);
+
+  const items = useMemo(() => {
+    const source = historyItems.length > 0 ? historyItems : generationHistory;
+    return [...source].sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp));
+  }, [historyItems, generationHistory]);
+  const swaggerDocsAvailable = Boolean(swaggerSpecData);
+
+  const cloneGenerationPayload = (payload) => {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    return {
+      ...payload,
+      generatedSql: {
+        ddl: payload.generatedSql?.ddl || '',
+        dml: payload.generatedSql?.dml || '',
+        dcl: payload.generatedSql?.dcl || '',
+        trigger: payload.generatedSql?.trigger || '',
+      },
+      schemaJson: payload.schemaJson || payload.schemaOverview || {},
+      schemaTables: Array.isArray(payload.schemaTables) ? payload.schemaTables : [],
+      credentials: {
+        username: payload.credentials?.username || '',
+        password: payload.credentials?.password || '',
+      },
+      downloads: payload.downloads || {},
+      files: payload.files || {},
+      specData: payload.specData || null,
+    };
+  };
+
+  const handleSwaggerSpecDataChange = (nextSpecData, nextSchemaTables = []) => {
+    setSwaggerSpecData(nextSpecData || null);
+    setSwaggerSchemaTables(Array.isArray(nextSchemaTables) ? nextSchemaTables : []);
+  };
+
+  const handleGenerationSuccess = (payload) => {
+    const snapshot = cloneGenerationPayload(payload);
+    if (!snapshot) {
+      return;
+    }
+
+    const itemId = snapshot.id || `gen_${Date.now()}`;
+    const historyEntry = {
+      id: itemId,
+      name: snapshot.name || 'Generated Database',
+      status: snapshot.status || 'success',
+      timestamp: snapshot.timestamp || new Date().toISOString(),
+      icon_type: snapshot.icon_type || '📊',
+      description: snapshot.description || 'Hasil generate database',
+      payload: snapshot,
+    };
+
+    setGenerationHistory((prev) => {
+      const next = [historyEntry, ...prev.filter((item) => item.id !== historyEntry.id)];
+      return next.sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp));
+    });
+
+    setActiveHistoryId(itemId);
+    setRestoredGeneration(snapshot);
+    handleSwaggerSpecDataChange(snapshot.specData, snapshot.schemaTables || []);
+  };
+
+  const handleHistoryItemClick = (item) => {
+    setActiveHistoryId(item.id);
+    const payload = cloneGenerationPayload(item.payload);
+    setRestoredGeneration(payload);
+
+    if (payload) {
+      handleSwaggerSpecDataChange(payload.specData, payload.schemaTables || []);
+    }
+
+    onHistoryItemClick?.(item);
+  };
+
+  const handleOpenSwaggerDocs = () => {
+    if (swaggerSpecData) {
+      setSwaggerDocsOpen(true);
+    }
+  };
+
+  const handleCloseSwaggerDocs = () => {
+    setSwaggerDocsOpen(false);
+  };
+
+  const handleNewSession = () => {
+    setSwaggerDocsOpen(false);
+    setRestoredGeneration(null);
+    setActiveHistoryId(null);
+    setSwaggerSpecData(null);
+    setSwaggerSchemaTables([]);
+    setSessionResetTick((prev) => prev + 1);
+
+    if (typeof window !== 'undefined' && window.location.hash) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    }
+  };
+
+  const handleLogout = () => {
+    logout();
+    setSwaggerDocsOpen(false);
+    setSwaggerSpecData(null);
+    setSwaggerSchemaTables([]);
+    setActiveHistoryId(null);
+    setRestoredGeneration(null);
+  };
+
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0F1419] via-[#1A1F2E] to-[#0F1419]">
       {/* Navbar */}
-      <Navbar status={navbarStatus} />
+      <Navbar status={navbarStatus} onNewSession={handleNewSession} onLogout={handleLogout} userEmail={user?.email} />
 
       {/* Main Content Area */}
       <main className="flex flex-1">
@@ -52,7 +167,10 @@ export default function AppLayout({
         <div className="hidden lg:block w-80 border-r border-white/10 bg-white/[0.02] overflow-y-auto">
           <Sidebar 
             historyItems={items}
-            onItemClick={onHistoryItemClick}
+            onItemClick={handleHistoryItemClick}
+            activeItemId={activeHistoryId}
+            onSwaggerDocsClick={handleOpenSwaggerDocs}
+            swaggerDocsAvailable={swaggerDocsAvailable}
           />
         </div>
 
@@ -67,12 +185,29 @@ export default function AppLayout({
             />
 
             {/* Main Content */}
-            <MainContent>
+            <MainContent
+              dashboardProps={{
+                swaggerDocsAvailable,
+                onSwaggerSpecDataChange: handleSwaggerSpecDataChange,
+                onOpenSwaggerDocs: handleOpenSwaggerDocs,
+                onGenerationSuccess: handleGenerationSuccess,
+                restoredGeneration,
+                sessionResetTick,
+              }}
+            >
               {children}
             </MainContent>
           </div>
         </div>
       </main>
+
+      {swaggerDocsOpen && swaggerSpecData && (
+        <SwaggerDocs
+          specData={swaggerSpecData}
+          schemaTables={swaggerSchemaTables}
+          onClose={handleCloseSwaggerDocs}
+        />
+      )}
     </div>
   );
 }
