@@ -4,6 +4,7 @@ import './nlp-to-sql';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import AppLayout from './Components/Layout/AppLayout';
+import { AuthProvider } from './contexts/AuthContext';
 
 /**
  * Entry point for the React app.
@@ -14,7 +15,9 @@ if (rootElement) {
   const root = createRoot(rootElement);
   root.render(
     <React.StrictMode>
-      <AppLayout />
+      <AuthProvider>
+        <AppLayout />
+      </AuthProvider>
     </React.StrictMode>
   );
 }

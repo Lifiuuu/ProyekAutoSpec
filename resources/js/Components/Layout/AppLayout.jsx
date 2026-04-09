@@ -4,6 +4,8 @@ import Header from './Header.jsx';
 import Sidebar from './Sidebar.jsx';
 import MainContent from './MainContent.jsx';
 import SwaggerDocs from '../SwaggerDocs.jsx';
+import AuthPage from '../Auth/AuthPage.jsx';
+import { useAuth } from '../../contexts/AuthContext.jsx';
 
 export default function AppLayout({
   title = 'AI Database Generator',
@@ -14,6 +16,7 @@ export default function AppLayout({
   navbarStatus = 'ready',
   children,
 }) {
+  const { isAuthenticated, user, logout } = useAuth();
   const [swaggerSpecData, setSwaggerSpecData] = useState(null);
   const [swaggerSchemaTables, setSwaggerSchemaTables] = useState([]);
   const [swaggerDocsOpen, setSwaggerDocsOpen] = useState(false);
@@ -126,10 +129,29 @@ export default function AppLayout({
     setSwaggerDocsOpen(false);
   };
 
+  const handleNewSession = () => {
+    setSwaggerDocsOpen(false);
+    setRestoredGeneration(null);
+    setActiveHistoryId(null);
+  };
+
+  const handleLogout = () => {
+    logout();
+    setSwaggerDocsOpen(false);
+    setSwaggerSpecData(null);
+    setSwaggerSchemaTables([]);
+    setActiveHistoryId(null);
+    setRestoredGeneration(null);
+  };
+
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0F1419] via-[#1A1F2E] to-[#0F1419]">
       {/* Navbar */}
-      <Navbar status={navbarStatus} />
+      <Navbar status={navbarStatus} onNewSession={handleNewSession} onLogout={handleLogout} userEmail={user?.email} />
 
       {/* Main Content Area */}
       <main className="flex flex-1">

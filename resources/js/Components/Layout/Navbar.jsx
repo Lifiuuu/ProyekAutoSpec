@@ -5,11 +5,18 @@
  *  - status?: string - Current workspace/connection status
  *  - onNewSession?: () => void - Callback untuk tombol "New Session"
  *  - onRecentHistory?: () => void - Callback untuk tombol "Recent History"
+ *  - onLogout?: () => void - Callback untuk keluar dari sesi
+ *  - userEmail?: string - Email user aktif
  */
 
-export default function Navbar({ status, onNewSession, onRecentHistory }) {
+export default function Navbar({ status, onNewSession, onRecentHistory, onLogout, userEmail }) {
   const handleNewSession = () => {
-    // Navigate to new session route - ini akan refresh page dengan state baru
+    if (onNewSession) {
+      onNewSession();
+      return;
+    }
+
+    // Fallback behavior jika callback tidak diberikan
     window.location.href = '/new-session';
   };
 
@@ -52,8 +59,23 @@ export default function Navbar({ status, onNewSession, onRecentHistory }) {
             >
               📋 Recent
             </button>
+
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="px-4 py-1.5 rounded-lg border border-red-400/30 bg-red-500/10 text-sm font-semibold text-red-200 hover:bg-red-500/20 transition-all duration-300"
+              >
+                Logout
+              </button>
+            )}
           </div>
         </div>
+
+        {userEmail && (
+          <p className="mt-2 text-right text-xs text-[#F7F8F0]/55">
+            Signed in as {userEmail}
+          </p>
+        )}
       </div>
     </nav>
   );
