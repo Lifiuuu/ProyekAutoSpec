@@ -35,6 +35,7 @@ export default function AppLayout({
   });
   const [activeHistoryId, setActiveHistoryId] = useState(null);
   const [restoredGeneration, setRestoredGeneration] = useState(null);
+  const [sessionResetTick, setSessionResetTick] = useState(0);
 
   useEffect(() => {
     try {
@@ -133,6 +134,13 @@ export default function AppLayout({
     setSwaggerDocsOpen(false);
     setRestoredGeneration(null);
     setActiveHistoryId(null);
+    setSwaggerSpecData(null);
+    setSwaggerSchemaTables([]);
+    setSessionResetTick((prev) => prev + 1);
+
+    if (typeof window !== 'undefined' && window.location.hash) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    }
   };
 
   const handleLogout = () => {
@@ -184,6 +192,7 @@ export default function AppLayout({
                 onOpenSwaggerDocs: handleOpenSwaggerDocs,
                 onGenerationSuccess: handleGenerationSuccess,
                 restoredGeneration,
+                sessionResetTick,
               }}
             >
               {children}

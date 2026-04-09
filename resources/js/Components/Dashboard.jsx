@@ -11,9 +11,10 @@ const Dashboard = ({
     onOpenSwaggerDocs,
     onGenerationSuccess,
     restoredGeneration,
+    sessionResetTick = 0,
 }) => {
 
-    const [state, setState] = useState({
+    const createInitialState = () => ({
         isLoading: false,
         nlpPrompt: '',
         dialect: 'postgresql',
@@ -45,6 +46,8 @@ const Dashboard = ({
         },
         showRollbackToast: false,
     });
+
+    const [state, setState] = useState(createInitialState);
 
     const mapSchemaJsonToTables = (payload) => {
         if (!payload || typeof payload !== 'object') return [];
@@ -122,6 +125,11 @@ const Dashboard = ({
             applyGenerationSnapshot(restoredGeneration);
         }
     }, [restoredGeneration]);
+
+    useEffect(() => {
+        setState(createInitialState());
+        onSwaggerSpecDataChange?.(null, []);
+    }, [sessionResetTick]);
 
     const buildSwaggerSchemaProperty = (type) => {
         const raw = String(type || '').toLowerCase();
