@@ -6,10 +6,11 @@
         <meta name="csrf-token" content="{{ csrf_token() }}">
         <title>Main Dashboard - {{ config('app.name', 'AutoSpec') }}</title>
 
-        @vite(['resources/css/app.css', 'resources/js/app.js'])
+        @viteReactRefresh
+        @vite(['resources/css/app.css', 'resources/js/app.jsx'])
     </head>
     <body class="bg-semute-bg-primary text-semute-text">
         <!-- React Root Mount Point -->
-        <div id="root"></div>
+        <div id="app"></div>
     </body>
 </html>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import axios from 'axios';
 
 /**
  * Modern Dashboard Component
@@ -125,29 +126,93 @@ const Dashboard = () => {
         setState((prev) => ({ ...prev, isLoading: true }));
 
         try {
-            const result = await fakeAiGenerate(state.nlpPrompt, state.dialect);
+            const payload = { prompt: state.nlpPrompt, dialect: state.dialect };
+            const response = await axios.post('/api/generate', payload);
+            const data = response?.data || {};
+
+            let generatedSql = { ddl: '', dml: '', dcl: '', trigger: '' };
+
+            // If backend already returns categorized SQL, use it
+            if (data.generatedSql && typeof data.generatedSql === 'object') {
+                generatedSql = {
+                    ddl: data.generatedSql.ddl || '',
+                    dml: data.generatedSql.dml || '',
+                    dcl: data.generatedSql.dcl || '',
+                    trigger: data.generatedSql.trigger || '',
+                };
+            } else if (typeof data.sql === 'string' && data.sql.trim()) {
+                // Best-effort parsing of a single SQL string into categories
+                const sqlText = data.sql;
+                const funcRegex = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION[\s\S]*?\$\$[\s\S]*?\$\$\s*;?/ig;
+                const procRegex = /CREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE[\s\S]*?\$\$[\s\S]*?\$\$\s*;?/ig;
+                const triggerRegex = /CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER[\s\S]*?;/ig;
+                const insertRegex = /INSERT\s+INTO[\s\S]*?;/ig;
+                const createTableRegex = /CREATE\s+TABLE[\s\S]*?;/ig;
+
+                const funcs = sqlText.match(funcRegex) || [];
+                const procs = sqlText.match(procRegex) || [];
+                const triggers = sqlText.match(triggerRegex) || [];
+
+                const triggerPart = [...funcs, ...procs, ...triggers].join('\n\n').trim();
+
+                // Extract DCL statements (GRANT/REVOKE) before removing other parts
+                const dclRegex = /\b(?:GRANT|REVOKE)\b[\s\S]*?;/ig;
+                const dclMatches = sqlText.match(dclRegex) || [];
+                const dcl = dclMatches.join('\n\n').trim();
+
+                // Remove function/proc/trigger and DCLs to find remaining DDL/DML
+                let remaining = sqlText.replace(funcRegex, '').replace(procRegex, '').replace(triggerRegex, '').replace(dclRegex, '');
+
+                const inserts = remaining.match(insertRegex) || [];
+                const dml = inserts.join('\n\n').trim();
+
+                const tables = remaining.match(createTableRegex) || [];
+                const ddl = tables.join('\n\n').trim();
+
+                generatedSql = {
+                    ddl: ddl || (!dml && !triggerPart && !dcl ? sqlText : ddl),
+                    dml: dml || '',
+                    dcl: dcl || data.sql_dcl || data.dcl || '',
+                    trigger: triggerPart || '',
+                };
+            } else {
+                // Fallback to older keys
+                generatedSql = {
+                    ddl: data.sql_ddl || data.ddl || '',
+                    dml: data.sql_dml || data.dml || '',
+                    dcl: data.sql_dcl || data.dcl || '',
+                    trigger: data.sql_trigger || data.trigger || '',
+                };
+            }
+
+            const schemaJson = data.schemaOverview || data.schema_overview || data.schemaJson || data.schema || {};
+            const credentials = data.credentials || { username: '', password: '' };
+            const downloads = data.downloads || {};
+            const files = data.files || {};
+
             setState((prev) => ({
                 ...prev,
-                generatedSql: result,
+                generatedSql,
                 showReviewPanel: true,
                 schemaOverview: {
-                    tables: mapSchemaJsonToTables(result.schemaJson),
-                    credentials: result.credentials || { username: '', password: '' },
-                    downloads: result.downloads || {},
-                    files: result.files || {},
+                    tables: mapSchemaJsonToTables(schemaJson),
+                    credentials,
+                    downloads,
+                    files,
                 },
                 showSchemaOverview: true,
-                isLoading: false,
             }));
         } catch (error) {
-            setState((prev) => ({
-                ...prev,
-                isLoading: false,
-                showRollbackToast: true,
-            }));
+            console.error('Generate request failed', error);
+            const message = error?.response?.data?.message || error.message || 'Unknown error';
+            setState((prev) => ({ ...prev, showRollbackToast: true }));
+            // Inform the user
+            alert(`Generate gagal: ${message}`);
             setTimeout(() => {
                 setState((prev) => ({ ...prev, showRollbackToast: false }));
             }, 3600);
+        } finally {
+            setState((prev) => ({ ...prev, isLoading: false }));
         }
     };
 

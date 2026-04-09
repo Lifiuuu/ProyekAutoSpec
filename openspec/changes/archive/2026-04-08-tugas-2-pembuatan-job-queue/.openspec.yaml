@@ -1,0 +1,7 @@
+title: "TUGAS 2: PEMBUATAN JOB QUEUE"
+description: "Create background Job to process generation prompts; wire Job dispatch from controller."
+authors:
+  - name: opsx-bot
+    email: opsx@local
+tags: [tugas, job, queue, generator]
+version: 1

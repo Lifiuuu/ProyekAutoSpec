@@ -1,0 +1,7 @@
+title: "TUGAS 1: Setup koneksi, route, & controller"
+description: "Scaffold for initial task: .env instructions, API route, and controller to accept prompt input. No Job or Services yet."
+authors:
+  - name: opsx-bot
+    email: opsx@local
+tags: [tugas, setup, generator]
+version: 1

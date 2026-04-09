@@ -1,0 +1,7 @@
+title: "TUGAS 4: MELENGKAPI SERVICE (TAHAP 2 & 3 - ARTIFACTS) & INTEGRASI GROQ API"
+description: "Extend GenerationService to call Groq API to produce OpenAPI and Postman artifacts from generated SQL, save them to storage, and validate JSON responses."
+authors:
+  - name: opsx-bot
+    email: opsx@local
+tags: [tugas, service, groq, artifacts]
+version: 1
