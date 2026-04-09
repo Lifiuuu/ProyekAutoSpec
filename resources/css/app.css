@@ -97,3 +97,124 @@
 .text-semute {
     color: var(--semute-text);
 }
+
+/* Swagger Docs Overrides */
+.swagger-docs-shell .swagger-ui {
+    color: var(--semute-text);
+}
+
+.swagger-docs-shell .swagger-ui .topbar,
+.swagger-docs-shell .swagger-ui .download-url-wrapper,
+.swagger-docs-shell .swagger-ui .scheme-container .schemes,
+.swagger-docs-shell .swagger-ui .try-out,
+.swagger-docs-shell .swagger-ui .search-container,
+.swagger-docs-shell .swagger-ui .filter-container {
+    display: none !important;
+}
+
+.swagger-docs-shell .swagger-ui .info,
+.swagger-docs-shell .swagger-ui .scheme-container,
+.swagger-docs-shell .swagger-ui .opblock,
+.swagger-docs-shell .swagger-ui .model-box,
+.swagger-docs-shell .swagger-ui .models,
+.swagger-docs-shell .swagger-ui .responses-wrapper,
+.swagger-docs-shell .swagger-ui .responses-inner,
+.swagger-docs-shell .swagger-ui .opblock-description-wrapper,
+.swagger-docs-shell .swagger-ui .parameters-container,
+.swagger-docs-shell .swagger-ui .responses-table,
+.swagger-docs-shell .swagger-ui .response-content-type,
+.swagger-docs-shell .swagger-ui .highlight-code,
+.swagger-docs-shell .swagger-ui .opblock-section-header {
+    background: transparent !important;
+    border-color: rgba(69, 104, 130, 0.45) !important;
+}
+
+.swagger-docs-shell .swagger-ui .opblock.opblock-get,
+.swagger-docs-shell .swagger-ui .opblock.opblock-post,
+.swagger-docs-shell .swagger-ui .opblock.opblock-put,
+.swagger-docs-shell .swagger-ui .opblock.opblock-delete,
+.swagger-docs-shell .swagger-ui .opblock.opblock-patch {
+    background: rgba(255, 255, 255, 0.02) !important;
+    border-color: rgba(69, 104, 130, 0.35) !important;
+}
+
+.swagger-docs-shell .swagger-ui .info__title,
+.swagger-docs-shell .swagger-ui .info__description,
+.swagger-docs-shell .swagger-ui .info .title,
+.swagger-docs-shell .swagger-ui .info .base-url,
+.swagger-docs-shell .swagger-ui .info .base-url strong,
+.swagger-docs-shell .swagger-ui .info .version,
+.swagger-docs-shell .swagger-ui .opblock-summary-method,
+.swagger-docs-shell .swagger-ui .opblock-summary-path,
+.swagger-docs-shell .swagger-ui .opblock-summary-description,
+.swagger-docs-shell .swagger-ui .opblock-tag,
+.swagger-docs-shell .swagger-ui .opblock-tag-section h4,
+.swagger-docs-shell .swagger-ui .parameter__name,
+.swagger-docs-shell .swagger-ui .parameter__type,
+.swagger-docs-shell .swagger-ui .parameter__in,
+.swagger-docs-shell .swagger-ui .response-col_status,
+.swagger-docs-shell .swagger-ui .response-col_description,
+.swagger-docs-shell .swagger-ui .response-col_links,
+.swagger-docs-shell .swagger-ui .model-title,
+.swagger-docs-shell .swagger-ui .model,
+.swagger-docs-shell .swagger-ui .prop-type,
+.swagger-docs-shell .swagger-ui .prop-format,
+.swagger-docs-shell .swagger-ui .renderedMarkdown,
+.swagger-docs-shell .swagger-ui .renderedMarkdown p,
+.swagger-docs-shell .swagger-ui .markdown,
+.swagger-docs-shell .swagger-ui .markdown p,
+.swagger-docs-shell .swagger-ui label,
+.swagger-docs-shell .swagger-ui span,
+.swagger-docs-shell .swagger-ui a,
+.swagger-docs-shell .swagger-ui p,
+.swagger-docs-shell .swagger-ui h1,
+.swagger-docs-shell .swagger-ui h2,
+.swagger-docs-shell .swagger-ui h3,
+.swagger-docs-shell .swagger-ui h4,
+.swagger-docs-shell .swagger-ui h5,
+.swagger-docs-shell .swagger-ui h6 {
+    color: var(--semute-text) !important;
+}
+
+.swagger-docs-shell .swagger-ui .opblock-summary-method {
+    background: rgba(69, 104, 130, 0.28) !important;
+    border: 1px solid rgba(69, 104, 130, 0.6) !important;
+}
+
+.swagger-docs-shell .swagger-ui .opblock-summary-control:focus,
+.swagger-docs-shell .swagger-ui button:focus,
+.swagger-docs-shell .swagger-ui input:focus,
+.swagger-docs-shell .swagger-ui textarea:focus,
+.swagger-docs-shell .swagger-ui select:focus {
+    outline: 1px solid rgba(247, 248, 240, 0.35) !important;
+    box-shadow: 0 0 0 2px rgba(69, 104, 130, 0.25) !important;
+}
+
+.swagger-docs-shell .swagger-ui .btn.try-out__btn,
+.swagger-docs-shell .swagger-ui .btn.execute,
+.swagger-docs-shell .swagger-ui .btn.cancel,
+.swagger-docs-shell .swagger-ui .btn.authorize,
+.swagger-docs-shell .swagger-ui .btn {
+    border-color: rgba(69, 104, 130, 0.55) !important;
+    background: rgba(35, 76, 106, 0.2) !important;
+    color: var(--semute-text) !important;
+}
+
+.swagger-docs-shell .swagger-ui .opblock-summary,
+.swagger-docs-shell .swagger-ui .opblock-summary-path,
+.swagger-docs-shell .swagger-ui .opblock-summary-description,
+.swagger-docs-shell .swagger-ui .tab li,
+.swagger-docs-shell .swagger-ui .parameter__type,
+.swagger-docs-shell .swagger-ui .response-col_status,
+.swagger-docs-shell .swagger-ui .response-col_description,
+.swagger-docs-shell .swagger-ui .response-col_links,
+.swagger-docs-shell .swagger-ui .model-title,
+.swagger-docs-shell .swagger-ui .model-box-control,
+.swagger-docs-shell .swagger-ui .opblock-tag {
+    color: var(--semute-text) !important;
+}
+
+.swagger-docs-overlay {
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+}

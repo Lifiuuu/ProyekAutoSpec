@@ -7,7 +7,7 @@
         <title>Main Dashboard - {{ config('app.name', 'AutoSpec') }}</title>
 
         @viteReactRefresh
-        @vite(['resources/css/app.css', 'resources/js/app.jsx'])
+        @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="bg-semute-bg-primary text-semute-text">
         <!-- React Root Mount Point -->

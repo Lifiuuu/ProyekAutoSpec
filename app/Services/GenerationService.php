@@ -20,6 +20,10 @@ class GenerationService
     public function generate(string $prompt): array
     {
         $runId = uniqid('api_');
+        $credentials = [
+            'username' => env('DB_USERNAME', 'postgres'),
+            'password' => env('DB_PASSWORD', 'postgres'),
+        ];
 
                 $system = <<<SYS
         Kamu adalah Database Schema Generator yang ketat. UBAH deskripsi user menjadi JSON MURNI dan TEPAT.
@@ -72,9 +76,6 @@ class GenerationService
         $openapiPath = "generations/{$runId}.openapi.json";
         $postmanPath = "generations/{$runId}.postman.json";
 
-        // Begin transaction that covers SQL execution + artifact generation
-        DB::beginTransaction();
-
         try {
             $headers = ['Accept' => 'application/json'];
             if (!empty($llmKey)) {
@@ -110,6 +111,9 @@ class GenerationService
             $cleanJson = $this->cleanLlmJson($raw);
 
             // Validate and decode JSON according to strict schema
+            $schema = [];
+            $parsedFallback = [];
+            $schemaWasSalvaged = false;
             try {
                 $schema = $this->validateAndDecodeJson($cleanJson);
             } catch (\RuntimeException $e) {
@@ -136,28 +140,95 @@ class GenerationService
                         Log::error('Tolerant JSON decoding also failed. Cleaned: '.substr($cleanJson, 0, 2000));
                         Log::error('Tolerant JSON attempt: '.substr($tolerant, 0, 2000));
 
-                        // As a fallback, try to salvage SQL-like content from the raw LLM output
-                        $salvagedSql = $this->parseSqlFromRaw($raw);
+                        // As a fallback, try to salvage a valid JSON prefix for the schema,
+                        // then pair it with SQL-like content extracted from the raw text.
+                        $parsedFallback = $this->parseSqlFromRaw($raw);
 
-                        // Persist salvaged SQL for manual inspection
-                        try {
-                            Storage::disk('local')->put("generations/{$runId}.salvaged.sql", $salvagedSql['full'] ?? $raw);
-                        } catch (\Throwable $__) {
-                            // ignore
+                        $tablesSection = $this->extractJsonArraySection($tolerant, 'tables');
+                        if ($tablesSection !== null) {
+                            $decodedPrefix = json_decode('{"tables":' . $tablesSection . '}', true);
+                            if (json_last_error() === JSON_ERROR_NONE && is_array($decodedPrefix)) {
+                                $schema = $decodedPrefix;
+                                $schemaWasSalvaged = true;
+
+                                if (!empty($parsedFallback['dcl'])) {
+                                    $fallbackDcl = array_values(array_filter(array_map('trim', preg_split('/\r?\n+/', $parsedFallback['dcl']))));
+                                    if (!empty($fallbackDcl)) {
+                                        $schema['dcl'] = array_values(array_unique(array_merge($schema['dcl'] ?? [], $fallbackDcl)));
+                                    }
+                                }
+
+                                // Continue with the salvaged schema so DDL/DML can still be generated.
+                            } else {
+                                // Persist salvaged SQL for manual inspection
+                                try {
+                                    Storage::disk('local')->put("generations/{$runId}.salvaged.sql", $parsedFallback['full'] ?? $raw);
+                                } catch (\Throwable $__) {
+                                    // ignore
+                                }
+
+                                // Return a structured fallback so frontend can still display SQL
+                                return [
+                                    'runId' => $runId,
+                                    'generatedSql' => [
+                                        'ddl' => $parsedFallback['ddl'] ?? '',
+                                        'dcl' => $parsedFallback['dcl'] ?? '',
+                                        'dml' => $parsedFallback['dml'] ?? '',
+                                        'trigger' => $parsedFallback['trigger'] ?? '',
+                                    ],
+                                    'schemaOverview' => [
+                                        'tables' => [],
+                                        'credentials' => $credentials,
+                                        'downloads' => [
+                                            'database.sql' => false,
+                                            'openapi.json' => false,
+                                            'postman_collection.json' => false,
+                                        ],
+                                        'files' => [
+                                            'database.sql' => $parsedFallback['ddl'] ?? '',
+                                            'openapi.json' => '',
+                                            'postman_collection.json' => '',
+                                        ],
+                                    ],
+                                    'credentials' => $credentials,
+                                    'error' => 'LLM JSON parse failed: ' . $e2->getMessage(),
+                                ];
+                            }
+                        } else {
+                            // Persist salvaged SQL for manual inspection
+                            try {
+                                Storage::disk('local')->put("generations/{$runId}.salvaged.sql", $parsedFallback['full'] ?? $raw);
+                            } catch (\Throwable $__) {
+                                // ignore
+                            }
+
+                            // Return a structured fallback so frontend can still display SQL
+                            return [
+                                'runId' => $runId,
+                                'generatedSql' => [
+                                    'ddl' => $parsedFallback['ddl'] ?? '',
+                                    'dcl' => $parsedFallback['dcl'] ?? '',
+                                    'dml' => $parsedFallback['dml'] ?? '',
+                                    'trigger' => $parsedFallback['trigger'] ?? '',
+                                ],
+                                'schemaOverview' => [
+                                    'tables' => [],
+                                    'credentials' => $credentials,
+                                    'downloads' => [
+                                        'database.sql' => false,
+                                        'openapi.json' => false,
+                                        'postman_collection.json' => false,
+                                    ],
+                                    'files' => [
+                                        'database.sql' => $parsedFallback['ddl'] ?? '',
+                                        'openapi.json' => '',
+                                        'postman_collection.json' => '',
+                                    ],
+                                ],
+                                'credentials' => $credentials,
+                                'error' => 'LLM JSON parse failed: ' . $e2->getMessage(),
+                            ];
                         }
-
-                        // Return a structured fallback so frontend can still display SQL
-                        return [
-                            'runId' => $runId,
-                            'generatedSql' => [
-                                'ddl' => $salvagedSql['ddl'] ?? '',
-                                'dcl' => $salvagedSql['dcl'] ?? '',
-                                'dml' => $salvagedSql['dml'] ?? '',
-                                'trigger' => $salvagedSql['trigger'] ?? '',
-                            ],
-                            'schemaOverview' => [],
-                            'error' => 'LLM JSON parse failed: ' . $e2->getMessage(),
-                        ];
                     }
             }
 
@@ -227,8 +298,11 @@ class GenerationService
             // a dedicated transaction so any error rolls everything back.
             $executionFailed = false;
             $executionErrorMsg = '';
+            $transactionStarted = false;
+            $fixedSql = $sql;
             try {
                 DB::beginTransaction();
+                $transactionStarted = true;
 
                 // Normalize identifiers and DCL syntax to reduce common LLM mistakes
                 $fixedSql = $this->normalizeSqlIdentifiersAndDcl($sql);
@@ -248,12 +322,15 @@ class GenerationService
                 $executionFailed = true;
                 $executionErrorMsg = $e->getMessage();
 
-                // Roll back the inner transaction/savepoint
-                try {
-                    DB::rollBack();
-                } catch (\Throwable $__) {
-                    // ignore rollback errors
+                // Roll back the inner transaction/savepoint only if it actually started.
+                if ($transactionStarted) {
+                    try {
+                        DB::rollBack();
+                    } catch (\Throwable $__) {
+                        // ignore rollback errors
+                    }
                 }
+                $transactionStarted = false;
 
                 // Try to extract helpful location information from the DB error
                 $origMsg = $e->getMessage();
@@ -296,41 +373,6 @@ class GenerationService
                 }
 
                 // do not rethrow here; we'll return parsed SQL parts and include error info
-            }
-
-            // If SQL execution failed, roll back outer transaction and return parsed SQL parts so UI can show them
-            if (!empty($executionFailed)) {
-                // Ensure outer transaction is rolled back
-                try {
-                    DB::rollBack();
-                } catch (\Throwable $__) {
-                    // ignore
-                }
-
-                // Re-extract categorized parts from the fixed SQL so UI shows what was attempted
-                $parsedFixed = [];
-                try {
-                    $parsedFixed = $this->parseSqlFromRaw($fixedSql ?? $sql);
-                } catch (\Throwable $__) {
-                    $parsedFixed = ['ddl' => $fixedSql ?? $sql, 'dml' => '', 'dcl' => '', 'trigger' => ''];
-                }
-
-                $retDdl = $parsedFixed['ddl'] ?? $categorizedSql['ddl'] ?? '';
-                $retDcl = $parsedFixed['dcl'] ?? $categorizedSql['dcl'] ?? '';
-                $retDml = $parsedFixed['dml'] ?? $categorizedSql['dml'] ?? '';
-                $retTrigger = $parsedFixed['trigger'] ?? $categorizedSql['trigger'] ?? '';
-
-                return [
-                    'runId' => $runId,
-                    'generatedSql' => [
-                        'ddl' => $retDdl,
-                        'dcl' => $retDcl,
-                        'dml' => $retDml,
-                        'trigger' => $retTrigger,
-                    ],
-                    'schemaOverview' => $schema ?? [],
-                    'error' => 'SQL Execution failed: ' . ($executionErrorMsg ?? 'unknown') . '. See generations/' . $runId . '.error.txt',
-                ];
             }
 
             // --- Tahap 2: Request OpenAPI JSON ---
@@ -397,7 +439,10 @@ SYS;
             }
 
             // All steps succeeded — commit transaction
-            DB::commit();
+            if ($transactionStarted) {
+                DB::commit();
+                $transactionStarted = false;
+            }
 
             // Re-extract categorized parts from the fixed SQL so UI shows the same SQL that ran
             $parsedFixed = $this->parseSqlFromRaw($fixedSql);
@@ -408,7 +453,14 @@ SYS;
             $retDml = $parsedFixed['dml'] ?? $categorizedSql['dml'] ?? '';
             $retTrigger = $parsedFixed['trigger'] ?? $categorizedSql['trigger'] ?? '';
 
-            return [
+            if (!empty($schemaWasSalvaged) && !empty($parsedFallback)) {
+                $retDdl = $retDdl !== '' ? $retDdl : ($parsedFallback['ddl'] ?? '');
+                $retDcl = $retDcl !== '' ? $retDcl : ($parsedFallback['dcl'] ?? '');
+                $retDml = $retDml !== '' ? $retDml : ($parsedFallback['dml'] ?? '');
+                $retTrigger = $retTrigger !== '' ? $retTrigger : ($parsedFallback['trigger'] ?? '');
+            }
+
+            $result = [
                 'runId' => $runId,
                 'generatedSql' => [
                     'ddl' => $retDdl,
@@ -416,8 +468,37 @@ SYS;
                     'dml' => $retDml,
                     'trigger' => $retTrigger,
                 ],
-                'schemaOverview' => $schema,
+                'schemaOverview' => [
+                    ...$schema,
+                    'credentials' => $credentials,
+                ],
+                'credentials' => $credentials,
             ];
+
+            $artifactFiles = [
+                'database.sql' => $sqlPath,
+                'openapi.json' => $openapiPath,
+                'postman_collection.json' => $postmanPath,
+            ];
+
+            $downloads = [];
+            $files = [];
+            foreach ($artifactFiles as $filename => $path) {
+                $exists = Storage::disk('local')->exists($path);
+                $downloads[$filename] = $exists;
+                $files[$filename] = $exists ? Storage::disk('local')->get($path) : '';
+            }
+
+            $result['downloads'] = $downloads;
+            $result['files'] = $files;
+            $result['schemaOverview']['downloads'] = $downloads;
+            $result['schemaOverview']['files'] = $files;
+
+            if (!empty($executionFailed)) {
+                $result['error'] = 'SQL Execution skipped/failed: ' . ($executionErrorMsg ?? 'unknown') . '. See generations/' . $runId . '.error.txt';
+            }
+
+            return $result;
         } catch (\Throwable $e) {
             // Roll back DB and clean up any partial artifacts
             try {
@@ -1002,5 +1083,74 @@ SYS;
         }
 
         return $best;
+    }
+
+    /**
+     * Extract a top-level JSON array value for a given key using bracket matching.
+     * Returns the array text including the surrounding [ ... ] or null if not found.
+     */
+    private function extractJsonArraySection(string $json, string $key): ?string
+    {
+        $needle = '"' . $key . '"';
+        $keyPos = stripos($json, $needle);
+        if ($keyPos === false) {
+            return null;
+        }
+
+        $colonPos = strpos($json, ':', $keyPos + strlen($needle));
+        if ($colonPos === false) {
+            return null;
+        }
+
+        $startPos = strpos($json, '[', $colonPos);
+        if ($startPos === false) {
+            return null;
+        }
+
+        $length = strlen($json);
+        $depth = 0;
+        $inString = false;
+        $escaped = false;
+
+        for ($i = $startPos; $i < $length; $i++) {
+            $char = $json[$i];
+
+            if ($inString) {
+                if ($escaped) {
+                    $escaped = false;
+                    continue;
+                }
+
+                if ($char === '\\') {
+                    $escaped = true;
+                    continue;
+                }
+
+                if ($char === '"') {
+                    $inString = false;
+                }
+
+                continue;
+            }
+
+            if ($char === '"') {
+                $inString = true;
+                continue;
+            }
+
+            if ($char === '[') {
+                $depth++;
+                continue;
+            }
+
+            if ($char === ']') {
+                $depth--;
+                if ($depth === 0) {
+                    return substr($json, $startPos, $i - $startPos + 1);
+                }
+            }
+        }
+
+        return null;
     }
 }
