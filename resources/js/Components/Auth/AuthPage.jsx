@@ -1,6 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 
+const AUTH_SESSION_KEY = 'autospec-auth-session';
+const AUTH_TOKEN_KEY = 'autospec-auth-token';
+
+function decodeBase64Url(value) {
+  if (!value) {
+    return '';
+  }
+
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4;
+  const padded = padding > 0 ? normalized + '='.repeat(4 - padding) : normalized;
+  try {
+    return window.atob(padded);
+  } catch {
+    return '';
+  }
+}
+
 function GoogleIcon() {
   return (
     <svg viewBox="0 0 48 48" className="h-5 w-5" aria-hidden="true">
@@ -48,7 +66,7 @@ function validate(email, password) {
 }
 
 export default function AuthPage() {
-  const { login, register, googleSignIn, isLoading } = useAuth();
+  const { login, register, isLoading } = useAuth();
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -61,6 +79,22 @@ export default function AuthPage() {
 
   const submitLabel = useMemo(() => (mode === 'login' ? 'Login' : 'Registrasi'), [mode]);
 
+  const redirectToDashboard = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const { pathname, search, hash } = window.location;
+    if (pathname === '/main-dashboard') {
+      if (hash) {
+        window.history.replaceState(null, '', `${pathname}${search}`);
+      }
+      return;
+    }
+
+    window.location.href = '/main-dashboard';
+  };
+
   useEffect(() => {
     const hash = typeof window !== 'undefined' ? window.location.hash.toLowerCase() : '';
     if (hash === '#register') {
@@ -71,6 +105,61 @@ export default function AuthPage() {
     if (hash === '#login') {
       setMode('login');
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    const authToken = url.searchParams.get('auth_token') || '';
+    const authUserEncoded = url.searchParams.get('auth_user') || '';
+    const authError = url.searchParams.get('auth_error') || '';
+
+    if (!authToken && !authError) {
+      return;
+    }
+
+    if (authError) {
+      pushToast('Google Sign-In gagal. Silakan coba lagi.', 'error');
+      url.searchParams.delete('auth_error');
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
+
+    let parsedUser = null;
+    const decodedUser = decodeBase64Url(authUserEncoded);
+    if (decodedUser) {
+      try {
+        parsedUser = JSON.parse(decodedUser);
+      } catch {
+        parsedUser = null;
+      }
+    }
+
+    if (authToken) {
+      const sessionPayload = {
+        token: authToken,
+        user: parsedUser,
+      };
+
+      try {
+        window.localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(sessionPayload));
+        window.localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    url.searchParams.delete('auth_token');
+    url.searchParams.delete('auth_user');
+    url.searchParams.delete('auth_provider');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    pushToast('Google Sign-In berhasil, mengarahkan ke Dashboard...', 'success');
+    // Force a reload so AuthProvider will re-read persisted session from localStorage
+    // (we removed the query params above, so assigning the same href may not trigger a navigation)
+    window.location.reload();
   }, []);
 
   const pushToast = (message, tone = 'info') => {
@@ -99,9 +188,7 @@ export default function AuthPage() {
       }
 
       pushToast('Autentikasi berhasil, mengarahkan ke Dashboard...', 'success');
-      if (window.location.pathname !== '/main-dashboard') {
-        window.location.href = '/main-dashboard';
-      }
+      redirectToDashboard();
     } catch (error) {
       const message = error?.response?.data?.message || 'Autentikasi gagal. Coba lagi.';
       pushToast(message, 'error');
@@ -109,19 +196,9 @@ export default function AuthPage() {
   };
 
   const handleGoogleSignIn = async () => {
-    try {
-      await googleSignIn({
-        email: 'google-user@autospec.local',
-        name: 'Google AutoSpec User',
-      });
-      pushToast('Google Sign-In berhasil, mengarahkan ke Dashboard...', 'success');
-      if (window.location.pathname !== '/main-dashboard') {
-        window.location.href = '/main-dashboard';
-      }
-    } catch (error) {
-      const message = error?.response?.data?.message || 'Google Sign-In gagal. Coba lagi.';
-      pushToast(message, 'error');
-    }
+    const returnPath = typeof window !== 'undefined' ? `${window.location.pathname}${window.location.search}` : '/main-dashboard';
+    const query = new URLSearchParams({ redirect: returnPath });
+    window.location.href = `/api/auth/google/start?${query.toString()}`;
   };
 
   return (

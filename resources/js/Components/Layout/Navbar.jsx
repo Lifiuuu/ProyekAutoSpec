@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+
 /**
  * Navbar Component
  * 
@@ -10,7 +12,25 @@
  */
 
 export default function Navbar({ status, onNewSession, onRecentHistory, onLogout, userEmail }) {
+  const clearAuthHash = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const { pathname, search, hash } = window.location;
+    const normalized = hash.toLowerCase();
+    if (normalized === '#login' || normalized === '#register') {
+      window.history.replaceState(null, '', `${pathname}${search}`);
+    }
+  };
+
+  useEffect(() => {
+    clearAuthHash();
+  }, []);
+
   const handleNewSession = () => {
+    clearAuthHash();
+
     if (onNewSession) {
       onNewSession();
       return;
@@ -18,6 +38,16 @@ export default function Navbar({ status, onNewSession, onRecentHistory, onLogout
 
     // Fallback behavior jika callback tidak diberikan
     window.location.href = '/new-session';
+  };
+
+  const handleRecentHistory = () => {
+    clearAuthHash();
+    onRecentHistory?.();
+  };
+
+  const handleLogoutClick = () => {
+    clearAuthHash();
+    onLogout?.();
   };
 
   return (
@@ -54,7 +84,7 @@ export default function Navbar({ status, onNewSession, onRecentHistory, onLogout
             </button>
 
             <button
-              onClick={onRecentHistory}
+              onClick={handleRecentHistory}
               className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-400 to-blue-500 text-sm font-semibold text-white hover:shadow-lg hover:shadow-cyan-500/50 transition-all duration-300"
             >
               📋 Recent
@@ -62,7 +92,7 @@ export default function Navbar({ status, onNewSession, onRecentHistory, onLogout
 
             {onLogout && (
               <button
-                onClick={onLogout}
+                onClick={handleLogoutClick}
                 className="px-4 py-1.5 rounded-lg border border-red-400/30 bg-red-500/10 text-sm font-semibold text-red-200 hover:bg-red-500/20 transition-all duration-300"
               >
                 Logout

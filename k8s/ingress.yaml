@@ -2,13 +2,13 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: autospec-web
-  namespace: autospec
+  namespace: semute
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "20m"
 spec:
   ingressClassName: nginx
   rules:
-    - host: autospec.local
+    - host: semute.hackathon.sev-2.com
       http:
         paths:
           - path: /
