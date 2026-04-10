@@ -2,18 +2,18 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: autospec-config
-  namespace: autospec
+  namespace: semute
 data:
   APP_NAME: AutoSpec
   APP_ENV: production
   APP_DEBUG: "false"
-  APP_URL: https://autospec.local
+  APP_URL: https://semute.hackathon.sev-2.com
   LOG_CHANNEL: stderr
   LOG_LEVEL: info
   DB_CONNECTION: pgsql
-  DB_HOST: 127.0.0.1
-  DB_PORT: "54322"
-  DB_DATABASE: postgres
+  DB_HOST: 103.185.52.138
+  DB_PORT: "1185"
+  DB_DATABASE: semute
   SESSION_DRIVER: file
   CACHE_STORE: file
   QUEUE_CONNECTION: database

@@ -24,6 +24,9 @@ const Dashboard = ({
             ddl: '',
             dml: '',
             dcl: '',
+            functions: '',
+            stored_procedures: '',
+            triggers: '',
             trigger: '',
         },
         activeSqlTab: 'ddl',
@@ -80,6 +83,9 @@ const Dashboard = ({
             ddl: snapshot.generatedSql?.ddl || '',
             dml: snapshot.generatedSql?.dml || '',
             dcl: snapshot.generatedSql?.dcl || '',
+            functions: snapshot.generatedSql?.functions || '',
+            stored_procedures: snapshot.generatedSql?.stored_procedures || '',
+            triggers: snapshot.generatedSql?.triggers || '',
             trigger: snapshot.generatedSql?.trigger || '',
         };
 
@@ -425,7 +431,15 @@ const Dashboard = ({
             const response = await axios.post('/api/generate', payload);
             const data = response?.data || {};
 
-            let generatedSql = { ddl: '', dml: '', dcl: '', trigger: '' };
+            let generatedSql = {
+                ddl: '',
+                dml: '',
+                dcl: '',
+                functions: '',
+                stored_procedures: '',
+                triggers: '',
+                trigger: '',
+            };
 
             // If backend already returns categorized SQL, use it
             if (data.generatedSql && typeof data.generatedSql === 'object') {
@@ -433,6 +447,9 @@ const Dashboard = ({
                     ddl: data.generatedSql.ddl || '',
                     dml: data.generatedSql.dml || '',
                     dcl: data.generatedSql.dcl || '',
+                    functions: data.generatedSql.functions || '',
+                    stored_procedures: data.generatedSql.stored_procedures || '',
+                    triggers: data.generatedSql.triggers || '',
                     trigger: data.generatedSql.trigger || '',
                 };
             } else if (typeof data.sql === 'string' && data.sql.trim()) {
@@ -468,6 +485,9 @@ const Dashboard = ({
                     ddl: ddl || (!dml && !triggerPart && !dcl ? sqlText : ddl),
                     dml: dml || '',
                     dcl: dcl || data.sql_dcl || data.dcl || '',
+                    functions: '',
+                    stored_procedures: '',
+                    triggers: triggerPart || '',
                     trigger: triggerPart || '',
                 };
             } else {
@@ -476,6 +496,9 @@ const Dashboard = ({
                     ddl: data.sql_ddl || data.ddl || '',
                     dml: data.sql_dml || data.dml || '',
                     dcl: data.sql_dcl || data.dcl || '',
+                    functions: data.sql_functions || data.functions || '',
+                    stored_procedures: data.sql_stored_procedures || data.stored_procedures || '',
+                    triggers: data.sql_triggers || data.triggers || '',
                     trigger: data.sql_trigger || data.trigger || '',
                 };
             }
@@ -681,17 +704,24 @@ const Dashboard = ({
                                 </div>
 
                                 <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-                                    {['ddl', 'dml', 'dcl', 'trigger'].map((tab) => (
+                                    {[
+                                        { key: 'ddl', label: 'DDL' },
+                                        { key: 'dml', label: 'DML' },
+                                        { key: 'dcl', label: 'DCL (Credentials)' },
+                                        { key: 'functions', label: 'Functions' },
+                                        { key: 'stored_procedures', label: 'Stored Procedures' },
+                                        { key: 'triggers', label: 'Triggers' },
+                                    ].map((tab) => (
                                         <button
-                                            key={tab}
-                                            onClick={() => setState((prev) => ({ ...prev, activeSqlTab: tab }))}
+                                            key={tab.key}
+                                            onClick={() => setState((prev) => ({ ...prev, activeSqlTab: tab.key }))}
                                             className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all duration-300 whitespace-nowrap ${
-                                                state.activeSqlTab === tab
+                                                state.activeSqlTab === tab.key
                                                     ? 'bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg shadow-cyan-500/50'
                                                     : 'border border-white/10 bg-white/[0.03] text-gray-300 hover:border-white/20'
                                             }`}
                                         >
-                                            {tab.toUpperCase()}
+                                            {tab.label}
                                         </button>
                                     ))}
                                 </div>

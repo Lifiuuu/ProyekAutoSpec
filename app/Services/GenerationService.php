@@ -3,62 +3,118 @@
 namespace App\Services;
 
 use GuzzleHttp\Client;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class GenerationService
 {
     /**
      * Generate SQL DDL from a prompt by calling an LLM, save it, and execute it.
      *
-     * @param string $prompt
-    * @return array{runId:string, sql:string} The run id and SQL generated
+     * @return array{runId:string, sql:string} The run id and SQL generated
+     *
      * @throws \Exception
      */
-    public function generate(string $prompt): array
+    public function generate(string $prompt, ?int $userId = null, ?string $userEmail = null): array
     {
         $runId = uniqid('api_');
+        $defaultConn = config('database.default');
         $credentials = [
-            'username' => env('DB_USERNAME', 'postgres'),
-            'password' => env('DB_PASSWORD', 'postgres'),
+            'username' => env('DB_USERNAME', config("database.connections.{$defaultConn}.username") ?? ''),
+            'password' => env('DB_PASSWORD', config("database.connections.{$defaultConn}.password") ?? ''),
         ];
+        $mainSchema = env('DB_MAIN_SCHEMA', 'autospec_main');
+        $generatedSchema = $this->createGeneratedSchemaName($runId, $userId);
+        $historyId = null;
 
-                $system = <<<SYS
-        Kamu adalah Database Schema Generator yang ketat. UBAH deskripsi user menjadi JSON MURNI dan TEPAT.
-        PERINTAH KETAT (IKUTI HURUF KECIL):
-        1) Output HARUS valid JSON saja — TIDAK BOLEH ada penjelasan, komentar, atau teks apapun di luar JSON.
-        2) Struktur JSON wajib minimal berisi kunci: "tables" (array). Contoh minimal:
+        $this->ensureMainSchemaStructures($mainSchema);
+        DB::statement(sprintf('CREATE SCHEMA IF NOT EXISTS "%s"', str_replace('"', '""', $generatedSchema)));
+        $historyId = $this->insertGenerationHistory($mainSchema, [
+            'run_id' => $runId,
+            'user_id' => $userId,
+            'user_email' => $userEmail,
+            'schema_name' => $generatedSchema,
+            'prompt' => $prompt,
+            'status' => 'running',
+            'error_message' => null,
+        ]);
+
+        $system = <<<'SYS'
+You are a highly strict Database Schema Generator that outputs PURE, VALID JSON ONLY.
+
+MANDATORY OUTPUT FORMAT:
+
+You MUST respond with ONLY valid JSON (no markdown, no explanation, no code fences, no extra text).
+
+The JSON structure MUST be:
+{
+  "tables": [
+    {
+      "name": "table_name",
+      "columns": [
         {
-            "tables": [
-                {
-                    "name": "{$runId}_nama_tabel",
-                    "columns": [{"type":"id","name":"id"}, {"type":"string","name":"nama"}],
-                    "dummy_data": [{"id":1,"nama":"Contoh"}, {"id":2,"nama":"Contoh2"}, {"id":3,"nama":"Contoh3"}]
-                }
-            ]
+          "name": "column_name",
+          "type": "SQL_TYPE",
+          "primary_key": boolean,
+          "auto_increment": boolean,
+          "not_null": boolean,
+          "unique": boolean,
+          "default": null_or_string,
+          "foreign_key": null_or_{"table": "target_table", "column": "target_column"}
         }
-        3) JANGAN keluarkan SQL mentah di luar JSON. KAMU BOLEH dan DIHARAPKAN membuat Trigger dan Function jika logika database membutuhkannya (misal: update stok). Masukkan definisi SQL-nya ke dalam array `triggers` dan `functions` sebagai objek dengan kunci `definition`.
-        4) Tipe kolom hanya boleh salah satu dari: "id", "string", "integer", "text", "boolean", "date", "datetime", "decimal". Jangan gunakan VARCHAR/INT/SMALLINT atau tipe SQL vendor lain.
-        5) Jika menggunakan "id" tipe maka nama kolom harus "id" dan itu adalah primary key. Foreign key harus bertipe "integer" dan nama mengikuti konvensi `{table}_{id}`.
-        6) SEMUA nama tabel WAJIB diawali dengan prefix "{$runId}_" (contoh: "{$runId}_buku"). Semua nama kolom harus hanya berisi huruf, angka, dan garis bawah (no spaces, no leading/trailing spaces).
-        7) Sertakan minimal 3 baris di "dummy_data" untuk setiap tabel. Nilai harus cocok dengan tipe kolom.
-        8) Jangan sertakan karakter kontrol atau baris terpotong — pastikan string JSON selesai dan valid. Gunakan hanya tanda kutip ganda untuk string.
-        9) Jika ada ketidakpastian, kembalikan struktur JSON dengan kunci "error" berisi pesan singkat, jangan mengeluarkan teks non-JSON.
+      ],
+      "dummy_data": [
+        {"column1": value1, "column2": value2}
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "name": "trigger_name",
+      "event": "AFTER INSERT|AFTER UPDATE",
+      "table": "table_name",
+      "statement": "SQL statement"
+    }
+  ],
+  "functions": [
+    {
+      "name": "function_name",
+      "parameters": [{"name": "param_name", "type": "INTEGER"}],
+      "returns": "INTEGER",
+      "statement": "SQL function body"
+    }
+  ],
+  "stored_procedures": []
+}
 
-        WAJIB SERTAKAN:
-        - Minimal 1 aturan DCL dasar (misal: "GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;"). Masukkan rekomendasi DCL ini ke dalam array JSON dengan kunci `dcl` (array of strings).
-        - Minimal 1 contoh Trigger lengkap untuk kebutuhan umum (misal: mencatat waktu update atau log aktivitas). Ikuti aturan PostgreSQL: buat dulu `functions` (PL/pgSQL) lalu `triggers` yang memanggil function. Masukkan definisi function ke `functions` (array of objects with key `definition`) dan definisi trigger ke `triggers` (array of objects with key `definition`).
+COLUMN TYPE EXAMPLES: INTEGER, VARCHAR(50), VARCHAR(100), TEXT, DATETIME, DECIMAL(10,2), BOOLEAN
 
-        Pastikan semua jawaban tetap DI DALAM JSON, mis.:
-        {
-          "tables": [...],
-          "functions": [{"definition":"CREATE FUNCTION ... $$ ... $$ LANGUAGE plpgsql;"}],
-          "triggers": [{"definition":"CREATE TRIGGER ..."}],
-          "dcl": ["GRANT ...;", "REVOKE ...;"]
-        }
-        SYS;
+RULES:
+1. Each table MUST have at least one column
+2. Provide 2-3 rows of realistic dummy_data for setiap table
+3. Use actual SQL data types (VARCHAR, INTEGER, DATETIME, etc.)
+4. Mark primary keys with "primary_key": true
+5. Use auto_increment: true untuk ID columns yang SERIAL/BIGSERIAL
+6. Use foreign_key untuk relationship antar tabel
+7. Include triggers untuk business logic automation
+8. Include functions untuk complex queries atau validations
+9. Provide at least 1 trigger atau function jika applicable
+
+Requirements:
+Buatkan skema database untuk sistem: [NAMA ATAU JENIS APLIKASI]
+
+Cakupan entitas yang dibutuhkan:
+1. Aktor/Pengguna (Entities yang melakukan aksi)
+2. Master Data (Data utama yang jarang berubah)
+3. Transaksional/Aktivitas (Data operasional yang terus bertambah)
+
+Spesifikasi Logika Bisnis:
+- Triggers untuk automasi
+- Functions untuk validasi atau complex logic
+- Dummy data dalam bahasa Indonesia untuk realism
+SYS;
 
         $llmUrl = env('LLM_API_URL');
         $llmKey = env('LLM_API_KEY');
@@ -78,7 +134,7 @@ class GenerationService
 
         try {
             $headers = ['Accept' => 'application/json'];
-            if (!empty($llmKey)) {
+            if (! empty($llmKey)) {
                 $headers['Authorization'] = 'Bearer '.$llmKey;
             }
 
@@ -136,64 +192,29 @@ class GenerationService
                 try {
                     $schema = $this->validateAndDecodeJson($tolerant);
                 } catch (\RuntimeException $e2) {
-                        // Log both cleaned variants for debugging
-                        Log::error('Tolerant JSON decoding also failed. Cleaned: '.substr($cleanJson, 0, 2000));
-                        Log::error('Tolerant JSON attempt: '.substr($tolerant, 0, 2000));
+                    // Log both cleaned variants for debugging
+                    Log::error('Tolerant JSON decoding also failed. Cleaned: '.substr($cleanJson, 0, 2000));
+                    Log::error('Tolerant JSON attempt: '.substr($tolerant, 0, 2000));
 
-                        // As a fallback, try to salvage a valid JSON prefix for the schema,
-                        // then pair it with SQL-like content extracted from the raw text.
-                        $parsedFallback = $this->parseSqlFromRaw($raw);
+                    // As a fallback, try to salvage a valid JSON prefix for the schema,
+                    // then pair it with SQL-like content extracted from the raw text.
+                    $parsedFallback = $this->parseSqlFromRaw($raw);
 
-                        $tablesSection = $this->extractJsonArraySection($tolerant, 'tables');
-                        if ($tablesSection !== null) {
-                            $decodedPrefix = json_decode('{"tables":' . $tablesSection . '}', true);
-                            if (json_last_error() === JSON_ERROR_NONE && is_array($decodedPrefix)) {
-                                $schema = $decodedPrefix;
-                                $schemaWasSalvaged = true;
+                    $tablesSection = $this->extractJsonArraySection($tolerant, 'tables');
+                    if ($tablesSection !== null) {
+                        $decodedPrefix = json_decode('{"tables":'.$tablesSection.'}', true);
+                        if (json_last_error() === JSON_ERROR_NONE && is_array($decodedPrefix)) {
+                            $schema = $decodedPrefix;
+                            $schemaWasSalvaged = true;
 
-                                if (!empty($parsedFallback['dcl'])) {
-                                    $fallbackDcl = array_values(array_filter(array_map('trim', preg_split('/\r?\n+/', $parsedFallback['dcl']))));
-                                    if (!empty($fallbackDcl)) {
-                                        $schema['dcl'] = array_values(array_unique(array_merge($schema['dcl'] ?? [], $fallbackDcl)));
-                                    }
+                            if (! empty($parsedFallback['dcl'])) {
+                                $fallbackDcl = array_values(array_filter(array_map('trim', preg_split('/\r?\n+/', $parsedFallback['dcl']))));
+                                if (! empty($fallbackDcl)) {
+                                    $schema['dcl'] = array_values(array_unique(array_merge($schema['dcl'] ?? [], $fallbackDcl)));
                                 }
-
-                                // Continue with the salvaged schema so DDL/DML can still be generated.
-                            } else {
-                                // Persist salvaged SQL for manual inspection
-                                try {
-                                    Storage::disk('local')->put("generations/{$runId}.salvaged.sql", $parsedFallback['full'] ?? $raw);
-                                } catch (\Throwable $__) {
-                                    // ignore
-                                }
-
-                                // Return a structured fallback so frontend can still display SQL
-                                return [
-                                    'runId' => $runId,
-                                    'generatedSql' => [
-                                        'ddl' => $parsedFallback['ddl'] ?? '',
-                                        'dcl' => $parsedFallback['dcl'] ?? '',
-                                        'dml' => $parsedFallback['dml'] ?? '',
-                                        'trigger' => $parsedFallback['trigger'] ?? '',
-                                    ],
-                                    'schemaOverview' => [
-                                        'tables' => [],
-                                        'credentials' => $credentials,
-                                        'downloads' => [
-                                            'database.sql' => false,
-                                            'openapi.json' => false,
-                                            'postman_collection.json' => false,
-                                        ],
-                                        'files' => [
-                                            'database.sql' => $parsedFallback['ddl'] ?? '',
-                                            'openapi.json' => '',
-                                            'postman_collection.json' => '',
-                                        ],
-                                    ],
-                                    'credentials' => $credentials,
-                                    'error' => 'LLM JSON parse failed: ' . $e2->getMessage(),
-                                ];
                             }
+
+                            // Continue with the salvaged schema so DDL/DML can still be generated.
                         } else {
                             // Persist salvaged SQL for manual inspection
                             try {
@@ -209,6 +230,9 @@ class GenerationService
                                     'ddl' => $parsedFallback['ddl'] ?? '',
                                     'dcl' => $parsedFallback['dcl'] ?? '',
                                     'dml' => $parsedFallback['dml'] ?? '',
+                                    'functions' => $parsedFallback['functions'] ?? '',
+                                    'stored_procedures' => $parsedFallback['stored_procedures'] ?? '',
+                                    'triggers' => $parsedFallback['triggers'] ?? '',
                                     'trigger' => $parsedFallback['trigger'] ?? '',
                                 ],
                                 'schemaOverview' => [
@@ -226,10 +250,48 @@ class GenerationService
                                     ],
                                 ],
                                 'credentials' => $credentials,
-                                'error' => 'LLM JSON parse failed: ' . $e2->getMessage(),
+                                'error' => 'LLM JSON parse failed: '.$e2->getMessage(),
                             ];
                         }
+                    } else {
+                        // Persist salvaged SQL for manual inspection
+                        try {
+                            Storage::disk('local')->put("generations/{$runId}.salvaged.sql", $parsedFallback['full'] ?? $raw);
+                        } catch (\Throwable $__) {
+                            // ignore
+                        }
+
+                        // Return a structured fallback so frontend can still display SQL
+                        return [
+                            'runId' => $runId,
+                            'generatedSql' => [
+                                'ddl' => $parsedFallback['ddl'] ?? '',
+                                'dcl' => $parsedFallback['dcl'] ?? '',
+                                'dml' => $parsedFallback['dml'] ?? '',
+                                'functions' => $parsedFallback['functions'] ?? '',
+                                'stored_procedures' => $parsedFallback['stored_procedures'] ?? '',
+                                'triggers' => $parsedFallback['triggers'] ?? '',
+                                'trigger' => $parsedFallback['trigger'] ?? '',
+                            ],
+                            'schemaOverview' => [
+                                'tables' => [],
+                                'credentials' => $credentials,
+                                'downloads' => [
+                                    'database.sql' => false,
+                                    'openapi.json' => false,
+                                    'postman_collection.json' => false,
+                                ],
+                                'files' => [
+                                    'database.sql' => $parsedFallback['ddl'] ?? '',
+                                    'openapi.json' => '',
+                                    'postman_collection.json' => '',
+                                ],
+                            ],
+                            'credentials' => $credentials,
+                            'error' => 'LLM JSON parse failed: '.$e2->getMessage(),
+                        ];
                     }
+                }
             }
 
             // Convert JSON schema to categorized SQL parts
@@ -266,7 +328,7 @@ class GenerationService
             $sql = trim(implode("\n\n", array_filter([trim($ddlPart), trim($dclPart), trim($triggerPart), trim($dmlPart)])));
 
             // Save SQL atomically
-            $tmpSqlPath = $sqlPath . '.tmp';
+            $tmpSqlPath = $sqlPath.'.tmp';
             Storage::disk('local')->put($tmpSqlPath, $sql);
             Storage::disk('local')->move($tmpSqlPath, $sqlPath);
 
@@ -289,7 +351,7 @@ class GenerationService
             [$executableSql, $skipped] = $this->sanitizeSqlForExecution($sql);
 
             // Persist skipped (complex) definitions for manual review
-            if (!empty($skipped)) {
+            if (! empty($skipped)) {
                 $skipPath = "generations/{$runId}.skipped.sql";
                 Storage::disk('local')->put($skipPath, $skipped);
             }
@@ -307,6 +369,10 @@ class GenerationService
                 // Normalize identifiers and DCL syntax to reduce common LLM mistakes
                 $fixedSql = $this->normalizeSqlIdentifiersAndDcl($sql);
 
+                // Scope execution to generated schema to avoid cross-schema contamination.
+                // Use session-level setting so subsequent unprepared statements see the search_path.
+                DB::statement("SELECT set_config('search_path', ?, false)", [$generatedSchema.',public']);
+
                 // Persist the fixed SQL for debugging
                 try {
                     Storage::disk('local')->put("generations/{$runId}.fixed.sql", $fixedSql);
@@ -315,6 +381,18 @@ class GenerationService
                 }
 
                 // Use unprepared to allow multi-statement blocks (plpgsql $$...$$ etc.)
+                // Ensure CREATE TABLE statements without explicit schema are qualified
+                // so they are created in the generated schema rather than public.
+                $fixedSql = preg_replace_callback(
+                    '/\bCREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?("?)([a-zA-Z0-9_]+)("?)/i',
+                    function ($m) use ($generatedSchema) {
+                        $ifNot = isset($m[1]) ? $m[1] : '';
+                        $tbl = $m[3];
+                        return 'CREATE TABLE ' . ($ifNot ?: '') . '"' . str_replace('"', '""', $generatedSchema) . '"."' . $tbl . '"';
+                    },
+                    $fixedSql
+                );
+
                 DB::unprepared($fixedSql);
 
                 DB::commit();
@@ -344,9 +422,9 @@ class GenerationService
                     $end = min($total, $errLine + 3);
                     $ctx = [];
                     for ($i = $start; $i <= $end; $i++) {
-                        $ctx[] = sprintf('%4d: %s', $i, $lines[$i-1]);
+                        $ctx[] = sprintf('%4d: %s', $i, $lines[$i - 1]);
                     }
-                    $lineInfo = "\n--- SQL context (lines {$start}-{$end}) ---\n" . implode("\n", $ctx) . "\n";
+                    $lineInfo = "\n--- SQL context (lines {$start}-{$end}) ---\n".implode("\n", $ctx)."\n";
                 } elseif (preg_match('/position\s+(\d+)/i', $origMsg, $m2)) {
                     $pos = (int) $m2[1];
                     $prefix = substr($sql, 0, max(0, $pos));
@@ -357,17 +435,17 @@ class GenerationService
                     $end = min($total, $errLine + 3);
                     $ctx = [];
                     for ($i = $start; $i <= $end; $i++) {
-                        $ctx[] = sprintf('%4d: %s', $i, $lines[$i-1]);
+                        $ctx[] = sprintf('%4d: %s', $i, $lines[$i - 1]);
                     }
-                    $lineInfo = "\n--- SQL context (approx position {$pos}, lines {$start}-{$end}) ---\n" . implode("\n", $ctx) . "\n";
+                    $lineInfo = "\n--- SQL context (approx position {$pos}, lines {$start}-{$end}) ---\n".implode("\n", $ctx)."\n";
                 } else {
                     $snippet = substr($sql, 0, 800);
-                    $lineInfo = "\n--- SQL snippet (first 800 chars) ---\n" . $snippet . "\n";
+                    $lineInfo = "\n--- SQL snippet (first 800 chars) ---\n".$snippet."\n";
                 }
 
                 // Save the raw error and context for easier debugging
                 try {
-                    Storage::disk('local')->put("generations/{$runId}.error.txt", $origMsg . "\n" . $lineInfo);
+                    Storage::disk('local')->put("generations/{$runId}.error.txt", $origMsg."\n".$lineInfo);
                 } catch (\Throwable $__) {
                     // ignore
                 }
@@ -379,7 +457,7 @@ class GenerationService
             $groqKey = env('GROQ_API_KEY');
             $groqUrl = env('GROQ_API_URL', $llmUrl);
 
-            if (!empty($groqUrl)) {
+            if (! empty($groqUrl)) {
                 $openapiSystem = <<<'SYS'
 You are a converter that transforms a database schema into a strict OpenAPI 3.0.0 specification in pure JSON. Base URL: http://localhost:8000/rest/v1/. Output ONLY valid JSON that conforms to OpenAPI 3.0.0 — do not include any explanatory text or comments.
 SYS;
@@ -398,10 +476,10 @@ SYS;
                 $cleanOpenapi = $this->cleanLlmJson($body2);
                 $decoded = json_decode($cleanOpenapi, true);
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('OpenAPI response is not valid JSON: ' . json_last_error_msg());
+                    throw new \RuntimeException('OpenAPI response is not valid JSON: '.json_last_error_msg());
                 }
 
-                $tmpOpenapi = $openapiPath . '.tmp';
+                $tmpOpenapi = $openapiPath.'.tmp';
                 Storage::disk('local')->put($tmpOpenapi, json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
                 Storage::disk('local')->move($tmpOpenapi, $openapiPath);
             } else {
@@ -409,9 +487,9 @@ SYS;
             }
 
             // --- Tahap 3: Request Postman Collection JSON ---
-            if (!empty($groqUrl)) {
+            if (! empty($groqUrl)) {
                 $postmanSystem = <<<'SYS'
-You are a generator that transforms a database schema into a Postman Collection v2.1.0 JSON file. Base URL: http://localhost:8000/rest/v1/. Output ONLY valid JSON conforming to Postman Collection v2.1.0. Include example headers for Supabase access: an 'apikey' header and an 'Authorization' header with 'Bearer <SUPABASE_KEY>'. Do not include explanatory text.
+You are a generator that transforms a database schema into a Postman Collection v2.1.0 JSON file. Base URL: http://localhost:8000/rest/v1/. Output ONLY valid JSON conforming to Postman Collection v2.1.0. Include example Authorization header with 'Bearer <ACCESS_TOKEN>'. Do not include explanatory text.
 SYS;
 
                 $resp3 = Http::withHeaders([
@@ -428,10 +506,10 @@ SYS;
                 $cleanPostman = $this->cleanLlmJson($body3);
                 $decoded3 = json_decode($cleanPostman, true);
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('Postman response is not valid JSON: ' . json_last_error_msg());
+                    throw new \RuntimeException('Postman response is not valid JSON: '.json_last_error_msg());
                 }
 
-                $tmpPostman = $postmanPath . '.tmp';
+                $tmpPostman = $postmanPath.'.tmp';
                 Storage::disk('local')->put($tmpPostman, json_encode($decoded3, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
                 Storage::disk('local')->move($tmpPostman, $postmanPath);
             } else {
@@ -453,7 +531,7 @@ SYS;
             $retDml = $parsedFixed['dml'] ?? $categorizedSql['dml'] ?? '';
             $retTrigger = $parsedFixed['trigger'] ?? $categorizedSql['trigger'] ?? '';
 
-            if (!empty($schemaWasSalvaged) && !empty($parsedFallback)) {
+            if (! empty($schemaWasSalvaged) && ! empty($parsedFallback)) {
                 $retDdl = $retDdl !== '' ? $retDdl : ($parsedFallback['ddl'] ?? '');
                 $retDcl = $retDcl !== '' ? $retDcl : ($parsedFallback['dcl'] ?? '');
                 $retDml = $retDml !== '' ? $retDml : ($parsedFallback['dml'] ?? '');
@@ -462,14 +540,19 @@ SYS;
 
             $result = [
                 'runId' => $runId,
+                'generatedSchema' => $generatedSchema,
                 'generatedSql' => [
                     'ddl' => $retDdl,
                     'dcl' => $retDcl,
                     'dml' => $retDml,
+                    'functions' => $parsedFixed['functions'] ?? $categorizedSql['functions'] ?? '',
+                    'stored_procedures' => $parsedFixed['stored_procedures'] ?? $categorizedSql['stored_procedures'] ?? '',
+                    'triggers' => $parsedFixed['triggers'] ?? $categorizedSql['triggers'] ?? '',
                     'trigger' => $retTrigger,
                 ],
                 'schemaOverview' => [
-                    ...$schema,
+                    'tables' => $this->extractTableOverview($schema),
+                    'generated_schema' => $generatedSchema,
                     'credentials' => $credentials,
                 ],
                 'credentials' => $credentials,
@@ -489,17 +572,79 @@ SYS;
                 $files[$filename] = $exists ? Storage::disk('local')->get($path) : '';
             }
 
+            // Build comprehensive SQL file with all parts properly organized
+            $comprehensiveSql = "-- ========================================\n";
+            $comprehensiveSql .= "-- Database Schema Generation\n";
+            $comprehensiveSql .= "-- Generated: ".date('Y-m-d H:i:s')."\n";
+            $comprehensiveSql .= "-- Run ID: ".$runId."\n";
+            $comprehensiveSql .= "-- Schema: ".$generatedSchema."\n";
+            $comprehensiveSql .= "-- ========================================\n\n";
+
+            if (!empty($retDdl)) {
+                $comprehensiveSql .= "-- DDL: Table Definitions\n";
+                $comprehensiveSql .= "-- ========================================\n";
+                $comprehensiveSql .= $retDdl."\n\n";
+            }
+
+            if (!empty($retDcl)) {
+                $comprehensiveSql .= "-- DCL: Access Control\n";
+                $comprehensiveSql .= "-- ========================================\n";
+                $comprehensiveSql .= $retDcl."\n\n";
+            }
+
+            if (!empty($parsedFixed['functions'] ?? $categorizedSql['functions'] ?? '')) {
+                $comprehensiveSql .= "-- Functions\n";
+                $comprehensiveSql .= "-- ========================================\n";
+                $comprehensiveSql .= ($parsedFixed['functions'] ?? $categorizedSql['functions'] ?? '')."\n\n";
+            }
+
+            if (!empty($parsedFixed['stored_procedures'] ?? $categorizedSql['stored_procedures'] ?? '')) {
+                $comprehensiveSql .= "-- Stored Procedures\n";
+                $comprehensiveSql .= "-- ========================================\n";
+                $comprehensiveSql .= ($parsedFixed['stored_procedures'] ?? $categorizedSql['stored_procedures'] ?? '')."\n\n";
+            }
+
+            if (!empty($parsedFixed['triggers'] ?? $categorizedSql['triggers'] ?? '')) {
+                $comprehensiveSql .= "-- Triggers\n";
+                $comprehensiveSql .= "-- ========================================\n";
+                $comprehensiveSql .= ($parsedFixed['triggers'] ?? $categorizedSql['triggers'] ?? '')."\n\n";
+            }
+
+            if (!empty($retDml)) {
+                $comprehensiveSql .= "-- DML: Dummy Data\n";
+                $comprehensiveSql .= "-- ========================================\n";
+                $comprehensiveSql .= $retDml."\n\n";
+            }
+
             $result['downloads'] = $downloads;
             $result['files'] = $files;
-            $result['schemaOverview']['downloads'] = $downloads;
-            $result['schemaOverview']['files'] = $files;
+            $result['files']['database.sql'] = $comprehensiveSql;
+            // Ensure database.sql is marked as available since we're generating it
+            $result['downloads']['database.sql'] = true;
+            
+            $result['schemaOverview']['downloads'] = $result['downloads'];
+            $result['schemaOverview']['files'] = [
+                'database.sql' => $comprehensiveSql,
+                'openapi.json' => $files['openapi.json'] ?? '',
+                'postman_collection.json' => $files['postman_collection.json'] ?? '',
+            ];
 
-            if (!empty($executionFailed)) {
-                $result['error'] = 'SQL Execution skipped/failed: ' . ($executionErrorMsg ?? 'unknown') . '. See generations/' . $runId . '.error.txt';
+            if (! empty($executionFailed)) {
+                $result['error'] = 'SQL Execution skipped/failed: '.($executionErrorMsg ?? 'unknown').'. See generations/'.$runId.'.error.txt';
             }
+
+            $this->updateGenerationHistory($mainSchema, $historyId, [
+                'status' => $executionFailed ? 'failed' : 'success',
+                'error_message' => $executionFailed ? $executionErrorMsg : null,
+            ]);
 
             return $result;
         } catch (\Throwable $e) {
+            $this->updateGenerationHistory($mainSchema, $historyId, [
+                'status' => 'failed',
+                'error_message' => $e->getMessage(),
+            ]);
+
             // Roll back DB and clean up any partial artifacts
             try {
                 DB::rollBack();
@@ -518,18 +663,27 @@ SYS;
                 }
             }
 
-            Log::error('GenerationService failed: ' . $e->getMessage(), ['exception' => $e]);
+            Log::error('GenerationService failed: '.$e->getMessage(), ['exception' => $e]);
             throw $e;
         }
     }
 
     /**
      * Try to extract SQL parts from raw LLM output when JSON parsing fails.
-     * Returns array with keys: full, ddl, dml, dcl, trigger
+     * Returns array with keys: full, ddl, dml, dcl, functions, stored_procedures, triggers, trigger
      */
     private function parseSqlFromRaw(string $raw): array
     {
-        $out = ['full' => $raw, 'ddl' => '', 'dml' => '', 'dcl' => '', 'trigger' => ''];
+        $out = [
+            'full' => $raw,
+            'ddl' => '',
+            'dml' => '',
+            'dcl' => '',
+            'functions' => '',
+            'stored_procedures' => '',
+            'triggers' => '',
+            'trigger' => '',
+        ];
 
         // Remove markdown fences
         $clean = preg_replace('/^```[a-zA-Z0-9]*\n|\n```$/', '', trim($raw));
@@ -538,59 +692,110 @@ SYS;
         $createTable = '/\bCREATE\s+TABLE\b[\s\S]*?;/i';
         $insert = '/\bINSERT\s+INTO\b[\s\S]*?;/i';
         $dcl = '/\b(?:GRANT|REVOKE)\b[\s\S]*?;/i';
-        $funcDollar = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b[\s\S]*?\$\$[\s\S]*?\$\$\s*;?/i';
-        $funcSimple = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b[\s\S]*?;/i';
+        $functionDollar = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b[\s\S]*?\$\$[\s\S]*?\$\$\s*;?/i';
+        $procedureDollar = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\b[\s\S]*?\$\$[\s\S]*?\$\$\s*;?/i';
+        $functionSimple = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b[\s\S]*?;/i';
+        $procedureSimple = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?PROCEDURE\b[\s\S]*?;/i';
         $trigger = '/\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\b[\s\S]*?;/i';
 
         // 1) Extract DDL (CREATE TABLE) and DCL, TRIGGER/FUNCTION definitions from the original clean text
         preg_match_all($createTable, $clean, $mTables);
         preg_match_all($dcl, $clean, $mDcl);
         preg_match_all($trigger, $clean, $mTrigger);
-        preg_match_all($funcDollar, $clean, $mFuncDollar);
-        // funcSimple is a fallback; we'll capture but prefer dollar-quoted fuller bodies
-        preg_match_all($funcSimple, $clean, $mFuncSimple);
+        preg_match_all($functionDollar, $clean, $mFunctionDollar);
+        preg_match_all($procedureDollar, $clean, $mProcedureDollar);
+        preg_match_all($functionSimple, $clean, $mFunctionSimple);
+        preg_match_all($procedureSimple, $clean, $mProcedureSimple);
 
-        $out['ddl'] = !empty($mTables[0]) ? implode("\n\n", array_map('trim', $mTables[0])) : '';
-        $out['dcl'] = !empty($mDcl[0]) ? implode("\n\n", array_map('trim', $mDcl[0])) : '';
+        $out['ddl'] = ! empty($mTables[0]) ? implode("\n\n", array_map('trim', $mTables[0])) : '';
+        $out['dcl'] = ! empty($mDcl[0]) ? implode("\n\n", array_map('trim', $mDcl[0])) : '';
 
         // Build trigger collection: include full function/procedure definitions and triggers
-        $funcs = [];
-        if (!empty($mFuncDollar[0])) $funcs = array_merge($funcs, $mFuncDollar[0]);
-        if (!empty($mFuncSimple[0])) {
-            // include only those not already captured by dollar-quoted pattern
-            foreach ($mFuncSimple[0] as $f) {
+        $functions = [];
+        if (! empty($mFunctionDollar[0])) {
+            $functions = array_merge($functions, $mFunctionDollar[0]);
+        }
+        if (! empty($mFunctionSimple[0])) {
+            foreach ($mFunctionSimple[0] as $f) {
                 $add = true;
-                foreach ($funcs as $ex) {
-                    if (stripos($ex, substr($f, 0, 40)) !== false) { $add = false; break; }
+                foreach ($functions as $ex) {
+                    if (stripos($ex, substr($f, 0, 40)) !== false) {
+                        $add = false;
+                        break;
+                    }
                 }
-                if ($add) $funcs[] = $f;
+                if ($add) {
+                    $functions[] = $f;
+                }
+            }
+        }
+
+        $procedures = [];
+        if (! empty($mProcedureDollar[0])) {
+            $procedures = array_merge($procedures, $mProcedureDollar[0]);
+        }
+        if (! empty($mProcedureSimple[0])) {
+            foreach ($mProcedureSimple[0] as $p) {
+                $add = true;
+                foreach ($procedures as $ex) {
+                    if (stripos($ex, substr($p, 0, 40)) !== false) {
+                        $add = false;
+                        break;
+                    }
+                }
+                if ($add) {
+                    $procedures[] = $p;
+                }
             }
         }
 
         $trigs = [];
-        if (!empty($mTrigger[0])) $trigs = array_merge($trigs, $mTrigger[0]);
+        if (! empty($mTrigger[0])) {
+            $trigs = array_merge($trigs, $mTrigger[0]);
+        }
 
-        $out['trigger'] = implode("\n\n", array_map('trim', array_merge($funcs, $trigs)));
+        $out['functions'] = implode("\n\n", array_map('trim', $functions));
+        $out['stored_procedures'] = implode("\n\n", array_map('trim', $procedures));
+        $out['triggers'] = implode("\n\n", array_map('trim', $trigs));
+        $out['trigger'] = implode("\n\n", array_filter([$out['functions'], $out['stored_procedures'], $out['triggers']]));
 
         // 2) Mask out function/trigger bodies so INSERT detection ignores INSERTs inside procedural code
         $masked = $clean;
         $allDefs = [];
         // Collect all procedural/trigger matches with offsets
-        preg_match_all($funcDollar, $clean, $m1, PREG_OFFSET_CAPTURE);
-        preg_match_all($funcSimple, $clean, $m2, PREG_OFFSET_CAPTURE);
-        preg_match_all($trigger, $clean, $m3, PREG_OFFSET_CAPTURE);
+        preg_match_all($functionDollar, $clean, $m1, PREG_OFFSET_CAPTURE);
+        preg_match_all($procedureDollar, $clean, $m2, PREG_OFFSET_CAPTURE);
+        preg_match_all($functionSimple, $clean, $m3, PREG_OFFSET_CAPTURE);
+        preg_match_all($procedureSimple, $clean, $m4, PREG_OFFSET_CAPTURE);
+        preg_match_all($trigger, $clean, $m5, PREG_OFFSET_CAPTURE);
 
         $matches = [];
-        if (!empty($m1[0])) $matches = array_merge($matches, $m1[0]);
-        if (!empty($m2[0])) $matches = array_merge($matches, $m2[0]);
-        if (!empty($m3[0])) $matches = array_merge($matches, $m3[0]);
+        if (! empty($m1[0])) {
+            $matches = array_merge($matches, $m1[0]);
+        }
+        if (! empty($m2[0])) {
+            $matches = array_merge($matches, $m2[0]);
+        }
+        if (! empty($m3[0])) {
+            $matches = array_merge($matches, $m3[0]);
+        }
+        if (! empty($m4[0])) {
+            $matches = array_merge($matches, $m4[0]);
+        }
+        if (! empty($m5[0])) {
+            $matches = array_merge($matches, $m5[0]);
+        }
 
         // Sort by offset descending to safely replace substrings
-        usort($matches, function ($a, $b) { return $b[1] <=> $a[1]; });
+        usort($matches, function ($a, $b) {
+            return $b[1] <=> $a[1];
+        });
         foreach ($matches as $mc) {
             $text = $mc[0];
             $off = $mc[1];
-            if ($off === false) continue;
+            if ($off === false) {
+                continue;
+            }
             $len = strlen($text);
             // Replace the procedural block with spaces to keep offsets stable
             $masked = substr_replace($masked, str_repeat(' ', $len), $off, $len);
@@ -598,7 +803,7 @@ SYS;
 
         // 3) Extract INSERTs only from masked content (so those inside functions/triggers are ignored)
         preg_match_all($insert, $masked, $mInserts);
-        $out['dml'] = !empty($mInserts[0]) ? implode("\n\n", array_map('trim', $mInserts[0])) : '';
+        $out['dml'] = ! empty($mInserts[0]) ? implode("\n\n", array_map('trim', $mInserts[0])) : '';
 
         // Fallback: if DDL or DML still empty, attempt statement-splitting classification
         if (trim($out['ddl']) === '' || trim($out['dml']) === '') {
@@ -607,18 +812,23 @@ SYS;
 
             foreach ($parts as $p) {
                 $s = trim($p);
-                if ($s === '') continue;
+                if ($s === '') {
+                    continue;
+                }
 
                 $low = strtolower($s);
                 if (preg_match('/^create\s+table\b/i', $s)) {
                     $candidate = $s;
                     // make sure it ends with ); style
-                    if (!str_ends_with(trim($candidate), ';')) $candidate = trim($candidate) . ';';
+                    if (! str_ends_with(trim($candidate), ';')) {
+                        $candidate = trim($candidate).';';
+                    }
                     if (trim($out['ddl']) === '') {
                         $out['ddl'] = $candidate;
                     } else {
-                        $out['ddl'] .= "\n\n" . $candidate;
+                        $out['ddl'] .= "\n\n".$candidate;
                     }
+
                     continue;
                 }
 
@@ -627,39 +837,78 @@ SYS;
                     // if the same substring exists in masked, accept it
                     if (strpos($masked, $s) !== false) {
                         $candidate = $s;
-                        if (!str_ends_with(trim($candidate), ';')) $candidate = trim($candidate) . ';';
+                        if (! str_ends_with(trim($candidate), ';')) {
+                            $candidate = trim($candidate).';';
+                        }
                         if (trim($out['dml']) === '') {
                             $out['dml'] = $candidate;
                         } else {
-                            $out['dml'] .= "\n\n" . $candidate;
+                            $out['dml'] .= "\n\n".$candidate;
                         }
                     }
+
                     continue;
                 }
 
                 if (preg_match('/^\s*(grant|revoke)\b/i', $s)) {
                     $candidate = $s;
-                    if (!str_ends_with(trim($candidate), ';')) $candidate = trim($candidate) . ';';
+                    if (! str_ends_with(trim($candidate), ';')) {
+                        $candidate = trim($candidate).';';
+                    }
                     if (trim($out['dcl']) === '') {
                         $out['dcl'] = $candidate;
                     } else {
-                        $out['dcl'] .= "\n\n" . $candidate;
+                        $out['dcl'] .= "\n\n".$candidate;
                     }
+
                     continue;
                 }
 
-                if (preg_match('/^create\s+(or\s+replace\s+)?(function|procedure|trigger)\b/i', $s)) {
+                if (preg_match('/^create\s+(or\s+replace\s+)?function\b/i', $s)) {
                     $candidate = $s;
-                    if (!str_ends_with(trim($candidate), ';')) $candidate = trim($candidate) . ';';
-                    if (trim($out['trigger']) === '') {
-                        $out['trigger'] = $candidate;
-                    } else {
-                        $out['trigger'] .= "\n\n" . $candidate;
+                    if (! str_ends_with(trim($candidate), ';')) {
+                        $candidate = trim($candidate).';';
                     }
+                    if (trim($out['functions']) === '') {
+                        $out['functions'] = $candidate;
+                    } else {
+                        $out['functions'] .= "\n\n".$candidate;
+                    }
+
+                    continue;
+                }
+
+                if (preg_match('/^create\s+(or\s+replace\s+)?procedure\b/i', $s)) {
+                    $candidate = $s;
+                    if (! str_ends_with(trim($candidate), ';')) {
+                        $candidate = trim($candidate).';';
+                    }
+                    if (trim($out['stored_procedures']) === '') {
+                        $out['stored_procedures'] = $candidate;
+                    } else {
+                        $out['stored_procedures'] .= "\n\n".$candidate;
+                    }
+
+                    continue;
+                }
+
+                if (preg_match('/^create\s+(or\s+replace\s+)?trigger\b/i', $s)) {
+                    $candidate = $s;
+                    if (! str_ends_with(trim($candidate), ';')) {
+                        $candidate = trim($candidate).';';
+                    }
+                    if (trim($out['triggers']) === '') {
+                        $out['triggers'] = $candidate;
+                    } else {
+                        $out['triggers'] .= "\n\n".$candidate;
+                    }
+
                     continue;
                 }
             }
         }
+
+        $out['trigger'] = implode("\n\n", array_filter([$out['functions'], $out['stored_procedures'], $out['triggers']]));
 
         // Final fallback: if everything still empty, keep whole cleaned input as ddl so UI shows something
         if (trim($out['ddl']) === '' && trim($out['dml']) === '' && trim($out['trigger']) === '' && trim($out['dcl']) === '') {
@@ -680,6 +929,7 @@ SYS;
             $sub = substr($s, 0, $pos);
             // Count single quotes
             $count = substr_count($sub, "'");
+
             return ($count % 2) === 1;
         };
 
@@ -690,11 +940,12 @@ SYS;
 
         $sql = preg_replace_callback(
             '/\b([A-Za-z_][A-Za-z0-9_]*)-([A-Za-z_][A-Za-z0-9_]*)\b/',
-            function ($m) use ($isInQuotes) {
+            function ($m) {
                 $full = $m[0];
                 $pos = strpos($GLOBALS['__gen_sql_tmp__'] ?? $m[0], $m[0]);
+
                 // The callback doesn't know absolute position; we'll instead perform a safer replace below.
-                return $m[1] . '_' . $m[2];
+                return $m[1].'_'.$m[2];
             },
             $sql
         );
@@ -709,8 +960,9 @@ SYS;
             $ident = trim($m[1], " \t\n\r\"'");
             $schema = $m[2];
             // Quote identifier to be safe
-            $identQuoted = '"' . str_replace('"', '""', $ident) . '"';
-            return 'ON TABLE ' . $schema . '.' . $identQuoted;
+            $identQuoted = '"'.str_replace('"', '""', $ident).'"';
+
+            return 'ON TABLE '.$schema.'.'.$identQuoted;
         }, $sql);
 
         // 3) Ensure any remaining GRANT/REVOKE that reference unquoted identifiers are quoted
@@ -723,10 +975,13 @@ SYS;
                 if (strpos($ident2, '.') !== false) {
                     // schema.table
                     $parts = explode('.', $ident2, 2);
-                    return 'ON ' . $parts[0] . '."' . $parts[1] . '"';
+
+                    return 'ON '.$parts[0].'."'.$parts[1].'"';
                 }
-                return 'ON "' . $ident2 . '"';
+
+                return 'ON "'.$ident2.'"';
             }, $stmt);
+
             return $stmt;
         }, $sql);
 
@@ -758,21 +1013,24 @@ SYS;
         $patternDollars = '/(CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\b.*?\$\$.*?\$\$\s*;)/is';
         $sql = preg_replace_callback($patternDollars, function ($m) use (&$skipped) {
             $skipped[] = trim($m[0]);
-            return "";
+
+            return '';
         }, $sql);
 
         // 2) Remove more compact CREATE FUNCTION/PROCEDURE; ... ; blocks (best-effort)
         $patternSimple = '/(CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\b.*?;)/is';
         $sql = preg_replace_callback($patternSimple, function ($m) use (&$skipped) {
             $skipped[] = trim($m[0]);
-            return "";
+
+            return '';
         }, $sql);
 
         // 3) Remove CREATE TRIGGER blocks (which may reference functions)
         $patternTrigger = '/(CREATE\s+(OR\s+REPLACE\s+)?TRIGGER\b.*?;)/is';
         $sql = preg_replace_callback($patternTrigger, function ($m) use (&$skipped) {
             $skipped[] = trim($m[0]);
-            return "";
+
+            return '';
         }, $sql);
 
         // Trim leftover whitespace and return
@@ -829,8 +1087,8 @@ SYS;
     private function validateAndDecodeJson(string $json): array
     {
         $decoded = json_decode($json, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                // Attempt simple repairs: balance braces/brackets and close unterminated quotes
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            // Attempt simple repairs: balance braces/brackets and close unterminated quotes
             $repaired = $json;
 
             // Remove trailing commas before closing
@@ -849,12 +1107,12 @@ SYS;
             }
 
             // Close an unclosed double-quote if present (count unescaped quotes)
-                $totalQuotes = substr_count($repaired, '"');
-                $escapedQuotes = substr_count($repaired, '\\"');
+            $totalQuotes = substr_count($repaired, '"');
+            $escapedQuotes = substr_count($repaired, '\\"');
             $unescaped = $totalQuotes - $escapedQuotes;
             if ($unescaped % 2 === 1) {
                 // append a double-quote to try closing an unterminated string
-                    $repaired .= '"';
+                $repaired .= '"';
             }
 
             $decoded = json_decode($repaired, true);
@@ -869,38 +1127,65 @@ SYS;
                 }
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    throw new \RuntimeException('LLM JSON parse failed: ' . json_last_error_msg());
+                    throw new \RuntimeException('LLM JSON parse failed: '.json_last_error_msg());
                 }
             }
         }
 
-        if (!is_array($decoded) || !isset($decoded['tables']) || !is_array($decoded['tables'])) {
-            throw new \RuntimeException('LLM JSON does not contain required "tables" array');
+        if (! is_array($decoded)) {
+            throw new \RuntimeException('LLM JSON must decode into an object');
         }
 
-        $allowedTypes = ['id', 'string', 'integer', 'text', 'boolean', 'date', 'datetime', 'decimal'];
+        // Ensure required array keys exist (with defaults if missing)
+        $decoded['tables'] = $decoded['tables'] ?? [];
+        $decoded['stored_procedures'] = $decoded['stored_procedures'] ?? [];
+        $decoded['functions'] = $decoded['functions'] ?? [];
+        $decoded['triggers'] = $decoded['triggers'] ?? [];
+        $decoded['dcl'] = $decoded['dcl'] ?? [];
+
+        // Validate that required keys are actually arrays
+        foreach (['tables', 'stored_procedures', 'functions', 'triggers'] as $key) {
+            if (! is_array($decoded[$key])) {
+                throw new \RuntimeException("Key '{$key}' must be an array, got: ".gettype($decoded[$key]));
+            }
+        }
+
+        // At least tables must not be empty or must have structure
+        if (empty($decoded['tables'])) {
+            throw new \RuntimeException('JSON must include at least one table definition');
+        }
+
+        $allowedTypes = ['id', 'string', 'integer', 'text', 'boolean', 'date', 'datetime', 'decimal', 'INTEGER', 'VARCHAR', 'VARCHAR(50)', 'VARCHAR(100)', 'VARCHAR(150)', 'VARCHAR(255)', 'TEXT', 'DATETIME', 'DECIMAL', 'DECIMAL(10,2)', 'DECIMAL(12,2)', 'INT', 'BIGINT', 'SERIAL', 'BIGSERIAL', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'CURRENT_TIMESTAMP'];
 
         foreach ($decoded['tables'] as $table) {
-            if (!isset($table['name']) || !isset($table['columns']) || !is_array($table['columns'])) {
+            if (! isset($table['name']) || ! isset($table['columns']) || ! is_array($table['columns'])) {
                 throw new \RuntimeException('Each table must have a name and columns array');
             }
             foreach ($table['columns'] as $col) {
-                if (!isset($col['type']) || !isset($col['name'])) {
+                if (! isset($col['type']) || ! isset($col['name'])) {
                     throw new \RuntimeException('Each column must have type and name');
                 }
-                if (!in_array($col['type'], $allowedTypes, true)) {
-                    throw new \RuntimeException('Invalid column type: ' . $col['type']);
+                // More flexible type checking - allow both shorthand and full SQL types
+                $colType = (string) $col['type'];
+                if (! in_array($colType, $allowedTypes, true) && ! preg_match('/^[A-Z]+(\([^)]+\))?$/', $colType)) {
+                    // Allow any uppercase type with optional parentheses
                 }
+                
                 if ($col['type'] === 'id' && $col['name'] !== 'id') {
                     throw new \RuntimeException('Type "id" may only be used for primary key named "id"');
+                }
+                if ($col['name'] !== 'id' && preg_match('/_id$/', (string) $col['name']) === 1 && $col['type'] !== 'integer') {
+                    throw new \RuntimeException('Foreign key columns ending with _id must use type "integer"');
                 }
             }
         }
 
-        // (Previously validated triggers for 'procedure' usage.)
-        // Removed strict validation to avoid failing the whole generation
-        // when the LLM uses legacy wording. Trigger definitions will be
-        // auto-fixed during SQL generation.
+        foreach ($decoded['triggers'] as $trigger) {
+            $definition = strtolower((string) ($trigger['definition'] ?? ''));
+            if ($definition !== '' && (str_contains($definition, 'execute procedure') || preg_match('/\bcall\b\s+[a-z_][a-z0-9_]*\s*\(/', $definition) === 1)) {
+                throw new \RuntimeException('Invalid trigger definition: PostgreSQL triggers must invoke functions, not procedures');
+            }
+        }
 
         return $decoded;
     }
@@ -916,55 +1201,76 @@ SYS;
     {
         $ddl = [];
         $dml = [];
+        $functions = [];
+        $storedProcedures = [];
         $triggers = [];
+
+        // Build a map of table names for foreign key resolution
+        $tableMap = [];
+        if (!empty($schema['tables']) && is_array($schema['tables'])) {
+            foreach ($schema['tables'] as $table) {
+                if (isset($table['name'])) {
+                    $tableMap[strtolower($table['name'])] = $table['name'];
+                }
+            }
+        }
 
         foreach ($schema['tables'] as $table) {
             // Sanitize table name: replace invalid chars (including '-') with underscore
-            $rawTableName = isset($table['name']) ? (string)$table['name'] : 'table_' . uniqid();
+            $rawTableName = isset($table['name']) ? (string) $table['name'] : 'table_'.uniqid();
             $safeTableName = preg_replace('/[^A-Za-z0-9_]/', '_', $rawTableName);
 
             $cols = [];
-            foreach ($table['columns'] as $col) {
-                $name = isset($col['name']) ? trim((string)$col['name']) : 'col_' . uniqid();
-                // sanitize column name
-                $name = preg_replace('/[^A-Za-z0-9_]/', '_', $name);
-                $type = $col['type'];
-                switch ($type) {
-                    case 'id':
-                        $cols[] = sprintf('"%s" BIGSERIAL PRIMARY KEY', $name);
-                        break;
-                    case 'integer':
-                        $cols[] = sprintf('"%s" INTEGER', $name);
-                        break;
-                    case 'string':
-                    case 'text':
-                        $cols[] = sprintf('"%s" TEXT', $name);
-                        break;
-                    case 'boolean':
-                        $cols[] = sprintf('"%s" BOOLEAN', $name);
-                        break;
-                    case 'date':
-                        $cols[] = sprintf('"%s" DATE', $name);
-                        break;
-                    case 'datetime':
-                        $cols[] = sprintf('"%s" TIMESTAMP', $name);
-                        break;
-                    case 'decimal':
-                        $cols[] = sprintf('"%s" DECIMAL', $name);
-                        break;
-                    default:
-                        throw new \RuntimeException('Unhandled type: ' . $type);
+            $primaryKeys = [];
+            $foreignKeys = [];
+            
+            if (!empty($table['columns']) && is_array($table['columns'])) {
+                foreach ($table['columns'] as $col) {
+                    $colDef = $this->buildColumnDefinition($col, $tableMap);
+                    if ($colDef) {
+                        $cols[] = $colDef;
+                        
+                        // Track primary keys
+                        if (!empty($col['primary_key'])) {
+                            $primaryKeys[] = preg_replace('/[^A-Za-z0-9_]/', '_', trim((string) $col['name']));
+                        }
+                        
+                        // Track foreign keys
+                        if (!empty($col['foreign_key']) && is_array($col['foreign_key'])) {
+                            $fkTable = preg_replace('/[^A-Za-z0-9_]/', '_', $col['foreign_key']['table'] ?? '');
+                            $fkColumn = preg_replace('/[^A-Za-z0-9_]/', '_', $col['foreign_key']['column'] ?? 'id');
+                            $colName = preg_replace('/[^A-Za-z0-9_]/', '_', trim((string) $col['name']));
+                            if ($fkTable) {
+                                $foreignKeys[] = sprintf(
+                                    'FOREIGN KEY ("%s") REFERENCES "%s"("%s")',
+                                    $colName,
+                                    $fkTable,
+                                    $fkColumn
+                                );
+                            }
+                        }
+                    }
                 }
             }
+            
+            // Add primary key constraint if not already part of column def
+            if (!empty($primaryKeys) && count($primaryKeys) > 1) {
+                $cols[] = sprintf('PRIMARY KEY ("%s")', implode('", "', $primaryKeys));
+            }
+            
+            // Add foreign key constraints
+            $cols = array_merge($cols, $foreignKeys);
 
             $ddl[] = sprintf('CREATE TABLE IF NOT EXISTS "%s" (%s);', $safeTableName, implode(', ', $cols));
 
             // DML: dummy data
-                if (!empty($table['dummy_data']) && is_array($table['dummy_data'])) {
+            if (! empty($table['dummy_data']) && is_array($table['dummy_data'])) {
                 $declaredCols = [];
-                foreach ($table['columns'] as $c) {
-                    if (isset($c['name'])) {
-                            $declaredCols[] = preg_replace('/[^A-Za-z0-9_]/', '_', trim((string)$c['name']));
+                if (!empty($table['columns']) && is_array($table['columns'])) {
+                    foreach ($table['columns'] as $c) {
+                        if (isset($c['name'])) {
+                            $declaredCols[] = preg_replace('/[^A-Za-z0-9_]/', '_', trim((string) $c['name']));
+                        }
                     }
                 }
 
@@ -987,52 +1293,71 @@ SYS;
                             } elseif (is_bool($v)) {
                                 $insertVals[] = $v ? 'TRUE' : 'FALSE';
                             } else {
-                                $insertVals[] = "'" . str_replace("'", "''", (string)$v) . "'";
+                                $insertVals[] = "'".str_replace("'", "''", (string) $v)."'";
                             }
                             $insertCols[] = $colName;
                         }
                     }
 
-                    if (!empty($insertCols)) {
+                    if (! empty($insertCols)) {
                         $dml[] = sprintf('INSERT INTO "%s" ("%s") VALUES (%s);', $safeTableName, implode('", "', $insertCols), implode(', ', $insertVals));
                     }
                 }
             }
         }
 
-        // functions
-        if (!empty($schema['functions']) && is_array($schema['functions'])) {
+        // functions — handle both 'definition' and new format with name/parameters
+        if (! empty($schema['functions']) && is_array($schema['functions'])) {
             foreach ($schema['functions'] as $f) {
-                if (isset($f['definition'])) {
-                    $triggers[] = $f['definition'];
+                if (!empty($f['definition'])) {
+                    // Legacy format with definition
+                    $functions[] = trim($f['definition']);
+                } elseif (!empty($f['name'])) {
+                    // New format with name and parameters
+                    $funcDef = $this->buildFunctionDefinition($f);
+                    if ($funcDef) {
+                        $functions[] = $funcDef;
+                    }
                 }
             }
         }
 
         // stored procedures
-        if (!empty($schema['stored_procedures']) && is_array($schema['stored_procedures'])) {
+        if (! empty($schema['stored_procedures']) && is_array($schema['stored_procedures'])) {
             foreach ($schema['stored_procedures'] as $p) {
-                if (isset($p['definition'])) {
-                    $triggers[] = $p['definition'];
+                if (!empty($p['definition'])) {
+                    $storedProcedures[] = trim($p['definition']);
+                } elseif (!empty($p['name'])) {
+                    $procDef = $this->buildProcedureDefinition($p);
+                    if ($procDef) {
+                        $storedProcedures[] = $procDef;
+                    }
                 }
             }
         }
 
-        // triggers — normalize wording
-        if (!empty($schema['triggers']) && is_array($schema['triggers'])) {
+        // triggers — handle both 'definition' and new format with event/table/statement
+        if (! empty($schema['triggers']) && is_array($schema['triggers'])) {
             foreach ($schema['triggers'] as $t) {
-                if (isset($t['definition'])) {
+                if (!empty($t['definition'])) {
+                    // Legacy format with definition
                     $def = $t['definition'];
                     $def = str_ireplace('EXECUTE PROCEDURE', 'EXECUTE FUNCTION', $def);
                     $def = str_ireplace('PROCEDURE', 'FUNCTION', $def);
-                    $triggers[] = $def;
+                    $triggers[] = trim($def);
+                } elseif (!empty($t['name']) && !empty($t['event']) && !empty($t['table'])) {
+                    // New format with name, event, table, statement
+                    $triggerDef = $this->buildTriggerDefinition($t);
+                    if ($triggerDef) {
+                        $triggers[] = $triggerDef;
+                    }
                 }
             }
         }
 
         // dcl — grants/revokes etc.
         $dcl = [];
-        if (!empty($schema['dcl']) && is_array($schema['dcl'])) {
+        if (! empty($schema['dcl']) && is_array($schema['dcl'])) {
             foreach ($schema['dcl'] as $rule) {
                 if (is_string($rule) && trim($rule) !== '') {
                     $dcl[] = trim($rule);
@@ -1044,8 +1369,295 @@ SYS;
             'ddl' => implode("\n\n", $ddl),
             'dcl' => implode("\n\n", $dcl),
             'dml' => implode("\n\n", $dml),
-            'trigger' => implode("\n\n", $triggers),
+            'functions' => implode("\n\n", $functions),
+            'stored_procedures' => implode("\n\n", $storedProcedures),
+            'triggers' => implode("\n\n", $triggers),
+            'trigger' => implode("\n\n", array_filter([
+                implode("\n\n", $functions),
+                implode("\n\n", $storedProcedures),
+                implode("\n\n", $triggers),
+            ])),
         ];
+    }
+
+    /**
+     * Build a column definition from the column schema.
+     */
+    private function buildColumnDefinition(array $col, array $tableMap = []): ?string
+    {
+        $name = isset($col['name']) ? trim((string) $col['name']) : null;
+        if (!$name) {
+            return null;
+        }
+
+        $name = preg_replace('/[^A-Za-z0-9_]/', '_', $name);
+        $type = $col['type'] ?? 'TEXT';
+
+        // Handle NULL/NOT NULL
+        $nullable = empty($col['not_null']);
+        
+        // Handle AUTO_INCREMENT (use SERIAL or BIGSERIAL)
+        $autoIncrement = !empty($col['auto_increment']);
+        if ($autoIncrement) {
+            if (stripos($type, 'INTEGER') !== false || $type === 'INT') {
+                $type = 'SERIAL';
+            } elseif (stripos($type, 'BIGINT') !== false) {
+                $type = 'BIGSERIAL';
+            }
+        }
+
+        $def = sprintf('"%s" %s', $name, $type);
+
+        // Add PRIMARY KEY constraint if applicable
+        if (!empty($col['primary_key']) && !$autoIncrement) {
+            $def .= ' PRIMARY KEY';
+        }
+
+        // Add UNIQUE constraint
+        if (!empty($col['unique'])) {
+            $def .= ' UNIQUE';
+        }
+
+        // Add DEFAULT constraint
+        if (isset($col['default'])) {
+            $default = $col['default'];
+            if (strtoupper($default) === 'CURRENT_TIMESTAMP') {
+                $def .= ' DEFAULT CURRENT_TIMESTAMP';
+            } elseif (is_string($default)) {
+                // Escape single quotes
+                $def .= " DEFAULT '".str_replace("'", "''", $default)."'";
+            } else {
+                $def .= " DEFAULT ".(string) $default;
+            }
+        }
+
+        // Add NOT NULL if specified
+        if (!$nullable) {
+            $def .= ' NOT NULL';
+        }
+
+        return $def;
+    }
+
+    /**
+     * Build a function definition from the function schema.
+     */
+    private function buildFunctionDefinition(array $func): ?string
+    {
+        $name = $func['name'] ?? null;
+        if (!$name) {
+            return null;
+        }
+
+        // If there's already a body/statement, use it
+        if (!empty($func['body'])) {
+            return trim($func['body']);
+        }
+
+        // Build basic function signature
+        $params = [];
+        if (!empty($func['parameters']) && is_array($func['parameters'])) {
+            foreach ($func['parameters'] as $param) {
+                $paramName = $param['name'] ?? 'p_param';
+                $paramType = $param['type'] ?? 'INTEGER';
+                $params[] = "{$paramName} {$paramType}";
+            }
+        }
+
+        $paramStr = !empty($params) ? implode(', ', $params) : '';
+        $returns = $func['returns'] ?? 'INTEGER';
+        $language = $func['language'] ?? 'plpgsql';
+        $body = $func['statement'] ?? 'BEGIN RETURN 0; END;';
+
+        // Build CREATE FUNCTION statement
+        $def = "CREATE OR REPLACE FUNCTION \"{$name}\"({$paramStr}) RETURNS {$returns} AS \$\$\n";
+        $def .= "BEGIN\n";
+        $def .= "  {$body}\n";
+        $def .= "END;\n";
+        $def .= "\$\$ LANGUAGE {$language};";
+
+        return $def;
+    }
+
+    /**
+     * Build a procedure definition from the procedure schema.
+     */
+    private function buildProcedureDefinition(array $proc): ?string
+    {
+        $name = $proc['name'] ?? null;
+        if (!$name) {
+            return null;
+        }
+
+        // If there's already a body, use it
+        if (!empty($proc['body'])) {
+            return trim($proc['body']);
+        }
+
+        // Build basic procedure signature
+        $params = [];
+        if (!empty($proc['parameters']) && is_array($proc['parameters'])) {
+            foreach ($proc['parameters'] as $param) {
+                $paramName = $param['name'] ?? 'p_param';
+                $paramType = $param['type'] ?? 'INTEGER';
+                $params[] = "{$paramName} {$paramType}";
+            }
+        }
+
+        $paramStr = !empty($params) ? implode(', ', $params) : '';
+        $language = $proc['language'] ?? 'plpgsql';
+        $body = $proc['statement'] ?? 'BEGIN RETURN 0; END;';
+
+        // Build CREATE PROCEDURE statement
+        $def = "CREATE OR REPLACE PROCEDURE \"{$name}\"({$paramStr}) AS \$\$\n";
+        $def .= "BEGIN\n";
+        $def .= "  {$body}\n";
+        $def .= "END;\n";
+        $def .= "\$\$ LANGUAGE {$language};";
+
+        return $def;
+    }
+
+    /**
+     * Build a trigger definition from the trigger schema.
+     */
+    private function buildTriggerDefinition(array $trigger): ?string
+    {
+        $name = $trigger['name'] ?? null;
+        $event = strtoupper($trigger['event'] ?? 'AFTER INSERT');
+        $table = $trigger['table'] ?? null;
+        $statement = $trigger['statement'] ?? null;
+
+        if (!$name || !$table || !$statement) {
+            return null;
+        }
+
+        // Sanitize names
+        $name = preg_replace('/[^A-Za-z0-9_]/', '_', $name);
+        $table = preg_replace('/[^A-Za-z0-9_]/', '_', $table);
+
+        // Build CREATE TRIGGER statement
+        $def = "CREATE OR REPLACE TRIGGER \"{$name}\"\n";
+        $def .= "{$event} ON \"{$table}\"\n";
+        $def .= "FOR EACH ROW\n";
+        $def .= "BEGIN\n";
+        $def .= "  {$statement}\n";
+        $def .= "END;";
+
+        return $def;
+    }
+
+    /**
+     * Extract table overview from schema for display in SQL review panel.
+     */
+    private function extractTableOverview(array $schema): array
+    {
+        $overview = [];
+
+        if (empty($schema['tables']) || !is_array($schema['tables'])) {
+            return $overview;
+        }
+
+        foreach ($schema['tables'] as $table) {
+            $tableName = isset($table['name']) ? (string) $table['name'] : 'unknown_table';
+            
+            $columns = [];
+            if (!empty($table['columns']) && is_array($table['columns'])) {
+                foreach ($table['columns'] as $col) {
+                    $colName = isset($col['name']) ? (string) $col['name'] : 'unknown_column';
+                    $columns[] = [
+                        'name' => $colName,
+                        'type' => $col['type'] ?? 'TEXT',
+                        'primary_key' => !empty($col['primary_key']),
+                        'not_null' => !empty($col['not_null']),
+                        'unique' => !empty($col['unique']),
+                        'auto_increment' => !empty($col['auto_increment']),
+                        'foreign_key' => $col['foreign_key'] ?? null,
+                        'default' => $col['default'] ?? null,
+                    ];
+                }
+            }
+
+            $dummyDataCount = 0;
+            if (!empty($table['dummy_data']) && is_array($table['dummy_data'])) {
+                $dummyDataCount = count($table['dummy_data']);
+            }
+
+            $overview[] = [
+                'name' => $tableName,
+                'column_count' => count($columns),
+                'columns' => $columns,
+                'dummy_data_count' => $dummyDataCount,
+            ];
+        }
+
+        return $overview;
+    }
+
+    private function createGeneratedSchemaName(string $runId, ?int $userId = null): string
+    {
+        $suffix = strtolower(preg_replace('/[^a-z0-9_]/i', '_', $runId));
+        $owner = $userId !== null ? 'u'.max(0, $userId).'_' : '';
+
+        return substr('gen_'.$owner.$suffix, 0, 63);
+    }
+
+    private function ensureMainSchemaStructures(string $mainSchema): void
+    {
+        $safeSchema = str_replace('"', '""', $mainSchema);
+        DB::statement(sprintf('CREATE SCHEMA IF NOT EXISTS "%s"', $safeSchema));
+        DB::statement(sprintf('CREATE TABLE IF NOT EXISTS "%s"."generation_history" (
+            id BIGSERIAL PRIMARY KEY,
+            run_id VARCHAR(120) NOT NULL UNIQUE,
+            user_id BIGINT NULL,
+            user_email VARCHAR(255) NULL,
+            schema_name VARCHAR(63) NOT NULL,
+            prompt TEXT NOT NULL,
+            status VARCHAR(32) NOT NULL,
+            error_message TEXT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )', $safeSchema));
+    }
+
+    private function insertGenerationHistory(string $mainSchema, array $payload): ?int
+    {
+        try {
+            return (int) DB::table($mainSchema.'.generation_history')->insertGetId([
+                'run_id' => (string) ($payload['run_id'] ?? ''),
+                'user_id' => $payload['user_id'] ?? null,
+                'user_email' => $payload['user_email'] ?? null,
+                'schema_name' => (string) ($payload['schema_name'] ?? ''),
+                'prompt' => (string) ($payload['prompt'] ?? ''),
+                'status' => (string) ($payload['status'] ?? 'running'),
+                'error_message' => $payload['error_message'] ?? null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ], 'id');
+        } catch (\Throwable $e) {
+            Log::warning('Failed to insert generation history: '.$e->getMessage());
+
+            return null;
+        }
+    }
+
+    private function updateGenerationHistory(string $mainSchema, ?int $historyId, array $payload): void
+    {
+        if ($historyId === null) {
+            return;
+        }
+
+        try {
+            DB::table($mainSchema.'.generation_history')
+                ->where('id', $historyId)
+                ->update([
+                    'status' => (string) ($payload['status'] ?? 'failed'),
+                    'error_message' => $payload['error_message'] ?? null,
+                    'updated_at' => now(),
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to update generation history: '.$e->getMessage());
+        }
     }
 
     /**
@@ -1071,6 +1683,7 @@ SYS;
             $candidate = substr($s, 0, $mid);
             if ($candidate === '') {
                 $low = $mid + 1;
+
                 continue;
             }
             json_decode($candidate, true);
@@ -1091,7 +1704,7 @@ SYS;
      */
     private function extractJsonArraySection(string $json, string $key): ?string
     {
-        $needle = '"' . $key . '"';
+        $needle = '"'.$key.'"';
         $keyPos = stripos($json, $needle);
         if ($keyPos === false) {
             return null;
@@ -1118,11 +1731,13 @@ SYS;
             if ($inString) {
                 if ($escaped) {
                     $escaped = false;
+
                     continue;
                 }
 
                 if ($char === '\\') {
                     $escaped = true;
+
                     continue;
                 }
 
@@ -1135,11 +1750,13 @@ SYS;
 
             if ($char === '"') {
                 $inString = true;
+
                 continue;
             }
 
             if ($char === '[') {
                 $depth++;
+
                 continue;
             }
 

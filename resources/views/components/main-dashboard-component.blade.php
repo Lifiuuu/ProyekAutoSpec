@@ -137,7 +137,7 @@
                     <section class="rounded-xl border border-primary/40 bg-background/70 p-5">
                         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <h3 class="text-lg font-semibold text-text">NLP to SQL Demo</h3>
-                            <p class="text-xs text-accent">Frontend call to Supabase Edge Function via apiClient</p>
+                            <p class="text-xs text-accent">Frontend call to backend NLP API via apiClient</p>
                         </div>
 
                         <div class="space-y-4">
@@ -232,9 +232,11 @@
     function renderSqlReviewPanel() {
         const panel = document.getElementById('sqlReviewPanel');
         if (!panel) {
+            console.error('sqlReviewPanel element not found');
             return;
         }
 
+        console.log('renderSqlReviewPanel called. showReviewPanel=', dashboardState.showReviewPanel);
         panel.classList.toggle('hidden', !dashboardState.showReviewPanel);
 
         const fallback = '-- Tidak ada output untuk kategori ini.';
@@ -243,10 +245,31 @@
         const dcl = document.getElementById('sql-editor-dcl');
         const trigger = document.getElementById('sql-editor-trigger');
 
-        if (ddl) ddl.value = dashboardState.generatedSql.ddl || fallback;
-        if (dml) dml.value = dashboardState.generatedSql.dml || fallback;
-        if (dcl) dcl.value = dashboardState.generatedSql.dcl || fallback;
-        if (trigger) trigger.value = dashboardState.generatedSql.trigger || fallback;
+        console.log('Elements found - ddl:', !!ddl, 'dml:', !!dml, 'dcl:', !!dcl, 'trigger:', !!trigger);
+
+        const ddlValue = dashboardState.generatedSql.ddl || fallback;
+        const dmlValue = dashboardState.generatedSql.dml || fallback;
+        const dclValue = dashboardState.generatedSql.dcl || fallback;
+        const triggerValue = dashboardState.generatedSql.trigger || fallback;
+
+        console.log('Values to set - ddl_len:', ddlValue.length, 'dml_len:', dmlValue.length, 'dcl_len:', dclValue.length, 'trigger_len:', triggerValue.length);
+
+        if (ddl) {
+            ddl.value = ddlValue;
+            console.log('✓ DDL set to', ddlValue.substring(0, 50) + '...');
+        }
+        if (dml) {
+            dml.value = dmlValue;
+            console.log('✓ DML set to', dmlValue.substring(0, 50) + '...');
+        }
+        if (dcl) {
+            dcl.value = dclValue;
+            console.log('✓ DCL set to', dclValue.substring(0, 50) + '...');
+        }
+        if (trigger) {
+            trigger.value = triggerValue;
+            console.log('✓ Trigger set to', triggerValue.substring(0, 50) + '...');
+        }
     }
 
     function resetGeneratedOutputState() {
@@ -345,6 +368,21 @@
             return [];
         }
 
+        // Handle new backend format: payload is already an array of tables from schemaOverview
+        if (Array.isArray(payload)) {
+            return payload.map((table, idx) => {
+                const columns = Array.isArray(table.columns) ? table.columns : [];
+                return {
+                    name: table.name || `table_${idx + 1}`,
+                    columns: columns.map((column, cIdx) => ({
+                        name: column.name || `column_${cIdx + 1}`,
+                        type: normalizeDataType(column.type),
+                    })),
+                };
+            });
+        }
+
+        // Handle legacy format: payload.tables
         const list = Array.isArray(payload.tables) ? payload.tables : [];
         return list.map((table, idx) => {
             const columns = Array.isArray(table.columns) ? table.columns : [];
@@ -365,16 +403,27 @@
         const dbPassword = document.getElementById('dbPassword');
 
         if (!panel || !cardsContainer || !dbUsername || !dbPassword) {
+            console.error('Schema overview elements not found', {
+                panel: !!panel,
+                cardsContainer: !!cardsContainer,
+                dbUsername: !!dbUsername,
+                dbPassword: !!dbPassword,
+            });
             return;
         }
 
+        console.log('renderSchemaOverview called. showSchemaOverview=', dashboardState.showSchemaOverview);
         panel.classList.toggle('hidden', !dashboardState.showSchemaOverview);
 
         cardsContainer.innerHTML = '';
+        console.log('Tables count:', dashboardState.schemaOverview.tables.length);
         if (!dashboardState.schemaOverview.tables.length) {
+            console.warn('No tables to render');
             cardsContainer.innerHTML = '<p class="rounded-md border border-primary/30 bg-background/60 px-3 py-2 text-sm text-accent">Belum ada data schema untuk ditampilkan.</p>';
         } else {
-            dashboardState.schemaOverview.tables.forEach((table) => {
+            console.log('Rendering', dashboardState.schemaOverview.tables.length, 'tables');
+            dashboardState.schemaOverview.tables.forEach((table, idx) => {
+                console.log(`Table ${idx}: ${table.name} with ${table.columns ? table.columns.length : 0} columns`);
                 const card = document.createElement('article');
                 card.className = 'rounded-lg border border-primary/40 bg-background/80 p-4';
 
@@ -383,7 +432,7 @@
                 title.textContent = table.name;
                 card.appendChild(title);
 
-                if (!table.columns.length) {
+                if (!table.columns || !table.columns.length) {
                     const empty = document.createElement('p');
                     empty.className = 'text-xs text-accent';
                     empty.textContent = 'Kolom tidak tersedia.';
@@ -418,8 +467,10 @@
 
         dbUsername.textContent = dashboardState.schemaOverview.credentials.username || '-';
         dbPassword.textContent = dashboardState.schemaOverview.credentials.password || '-';
+        console.log('Credentials set - username:', dashboardState.schemaOverview.credentials.username);
 
         const buttons = document.querySelectorAll('.download-btn');
+        console.log('Download buttons found:', buttons.length);
         buttons.forEach((button) => {
             const file = button.getAttribute('data-download');
             button.disabled = !dashboardState.schemaOverview.downloads[file];
@@ -469,6 +520,56 @@
                 });
             });
         });
+    }
+
+    async function callGenerateApi(prompt) {
+        try {
+            const response = await fetch('/api/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                },
+                body: JSON.stringify({
+                    prompt: prompt,
+                }),
+            });
+
+            let data;
+            try {
+                data = await response.json();
+            } catch (e) {
+                console.error('Failed to parse response as JSON:', e);
+                const text = await response.text();
+                console.error('Response text:', text);
+                throw new Error(`Invalid response format: ${text.substring(0, 200)}`);
+            }
+
+            if (!response.ok) {
+                console.error('API Error:', response.status, data);
+                if (response.status === 422) {
+                    if (data.rollbackTriggered) {
+                        const error = new Error(data.message || 'SQL Execution failed');
+                        error.code = 'SQL_STRUCTURE_INVALID';
+                        error.response = { status: 422, data };
+                        throw error;
+                    }
+                }
+                throw new Error(data.message || `API Error: ${response.status} ${response.statusText}`);
+            }
+
+            // Ensure response structure
+            if (!data.success && !data.generatedSql) {
+                console.error('Invalid response structure:', data);
+                throw new Error('Response missing required fields: generatedSql, schemaOverview');
+            }
+
+            return data;
+        } catch (error) {
+            console.error('callGenerateApi error:', error);
+            throw error;
+        }
     }
 
     async function fakeAiGenerate(prompt, dialect) {
@@ -542,6 +643,7 @@
         const dialectEl = document.getElementById('dialect');
 
         if (!promptEl || !dialectEl) {
+            console.error('Required form elements not found');
             return;
         }
 
@@ -549,6 +651,7 @@
         const allowedDialects = ['postgresql'];
 
         if (dashboardState.isLoading) {
+            console.warn('Generation already in progress');
             return;
         }
 
@@ -568,25 +671,79 @@
 
         (async () => {
             try {
-                const result = await fakeAiGenerate(prompt, dialectEl.value);
-                dashboardState.generatedSql = result;
-                dashboardState.showReviewPanel = true;
-                renderSqlReviewPanel();
+                console.log('Calling API with prompt:', prompt.substring(0, 100) + '...');
+                // Call real API endpoint instead of fakeAiGenerate
+                const result = await callGenerateApi(prompt);
+                
+                console.log('API Response:', result);
+                console.log('Response keys:', Object.keys(result || {}));
 
-                dashboardState.schemaOverview.tables = mapSchemaJsonToTables(result.schemaJson);
-                dashboardState.schemaOverview.credentials = result.credentials || { username: '', password: '' };
-                dashboardState.schemaOverview.downloads = result.downloads || {};
-                dashboardState.schemaOverview.files = result.files || {};
+                // Validate response structure
+                if (!result || typeof result !== 'object') {
+                    console.error('Invalid response object:', result);
+                    alert('Invalid response from API');
+                    return;
+                }
+
+                if (!result.generatedSql) {
+                    console.error('Response missing generatedSql. Available keys:', Object.keys(result));
+                    alert('Response missing SQL data');
+                    return;
+                }
+
+                // Map backend response to frontend state
+                // generatedSql contains: ddl, dcl, dml, trigger, functions, stored_procedures, triggers
+                const genSql = result.generatedSql || {};
+                dashboardState.generatedSql = {
+                    ddl: genSql.ddl || '',
+                    dcl: genSql.dcl || '',
+                    dml: genSql.dml || '',
+                    trigger: genSql.trigger || '',
+                };
+                
+                console.log('Mapped generatedSql lengths:', {
+                    ddl: dashboardState.generatedSql.ddl.length,
+                    dcl: dashboardState.generatedSql.dcl.length,
+                    dml: dashboardState.generatedSql.dml.length,
+                    trigger: dashboardState.generatedSql.trigger.length,
+                });
+                
+                dashboardState.showReviewPanel = true;
+                console.log('Setting showReviewPanel to true');
+                renderSqlReviewPanel();
+                console.log('✓ SQL Review Panel rendered');
+
+                // schemaOverview from backend contains tables, credentials, downloads, files
+                const schemaOverview = result.schemaOverview || {};
+                dashboardState.schemaOverview.tables = (schemaOverview.tables && Array.isArray(schemaOverview.tables)) ? schemaOverview.tables : [];
+                dashboardState.schemaOverview.credentials = schemaOverview.credentials || result.credentials || { username: '', password: '' };
+                dashboardState.schemaOverview.downloads = (schemaOverview.downloads && typeof schemaOverview.downloads === 'object') ? schemaOverview.downloads : {};
+                dashboardState.schemaOverview.files = (schemaOverview.files && typeof schemaOverview.files === 'object') ? schemaOverview.files : {};
+                
+                console.log('Mapped schemaOverview:', {
+                    tables_count: dashboardState.schemaOverview.tables.length,
+                    credentials: dashboardState.schemaOverview.credentials,
+                    downloads: dashboardState.schemaOverview.downloads,
+                    files_count: Object.keys(dashboardState.schemaOverview.files).length,
+                });
+                
                 dashboardState.showSchemaOverview = true;
+                console.log('Setting showSchemaOverview to true');
                 renderSchemaOverview();
+                console.log('✓ Schema Overview Panel rendered');
+
+                if (result.error) {
+                    console.warn('Generation completed with warning:', result.error);
+                }
             } catch (error) {
+                console.error('Generation error:', error);
                 if (isRollbackStructureError(error)) {
                     resetGeneratedOutputState();
                     showRollbackToast();
                     return;
                 }
 
-                alert('Terjadi kesalahan saat memproses generate SQL.');
+                alert('Terjadi kesalahan saat memproses generate SQL: ' + (error.message || ''));
             } finally {
                 setLoadingState(false);
             }

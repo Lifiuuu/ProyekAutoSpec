@@ -7,6 +7,7 @@ import SwaggerDocs from '../SwaggerDocs.jsx';
 import AuthPage from '../Auth/AuthPage.jsx';
 import LandingPage from '../Landing/LandingPage.jsx';
 import { useAuth } from '../../contexts/AuthContext.jsx';
+import { apiClient } from '../../apiClient';
 
 export default function AppLayout({
   title = 'AI Database Generator',
@@ -47,6 +48,28 @@ export default function AppLayout({
       // Ignore storage errors; history still works for the current session.
     }
   }, [generationHistory]);
+
+  // When user is authenticated, try to load server-side per-user history
+  useEffect(() => {
+    let active = true;
+    if (!isAuthenticated) {
+      return () => { active = false; };
+    }
+
+    (async () => {
+      try {
+        const resp = await apiClient.get('/generations/history');
+        if (!active) return;
+        if (resp.data && resp.data.success && Array.isArray(resp.data.items)) {
+          setGenerationHistory(resp.data.items);
+        }
+      } catch (e) {
+        // ignore failures and fall back to local history
+      }
+    })();
+
+    return () => { active = false; };
+  }, [isAuthenticated]);
 
   const items = useMemo(() => {
     const source = historyItems.length > 0 ? historyItems : generationHistory;

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: autospec-web
-  namespace: autospec
+  namespace: semute
   labels:
     app.kubernetes.io/name: proyekautospec
     app.kubernetes.io/component: web

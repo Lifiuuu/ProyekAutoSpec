@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: autospec-worker
-  namespace: autospec
+  namespace: semute
   labels:
     app.kubernetes.io/name: proyekautospec
     app.kubernetes.io/component: worker

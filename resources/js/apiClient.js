@@ -1,15 +1,15 @@
 import axios from 'axios';
 
 function resolveAuthorizationToken() {
-    const metaToken = document.querySelector('meta[name="supabase-access-token"]')?.getAttribute('content')?.trim();
-    const storedToken = window.localStorage.getItem('supabase-access-token')?.trim();
+    const metaToken = document.querySelector('meta[name="autospec-auth-token"]')?.getAttribute('content')?.trim();
+    const storedToken = window.localStorage.getItem('autospec-auth-token')?.trim();
     const authToken = window.localStorage.getItem('autospec-auth-token')?.trim();
 
     return authToken || metaToken || storedToken || '';
 }
 
 export const apiClient = axios.create({
-    baseURL: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL || '/functions/v1',
+    baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
     headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
